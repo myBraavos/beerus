@@ -1,14 +1,16 @@
-use std::{collections::HashSet, num::NonZeroU128, sync::Arc};
+use std::sync::Arc;
 
 use blockifier::{
-    blockifier::block::{BlockInfo, GasPrices},
     bouncer::BouncerConfig,
     context::{BlockContext, ChainInfo, FeeTokenAddresses, TransactionContext},
     execution::{
         call_info::CallInfo,
         common_hints::ExecutionMode,
-        contract_class::ContractClass,
-        entry_point::{CallEntryPoint, CallType, EntryPointExecutionContext},
+        contract_class::RunnableCompiledClass,
+        entry_point::{
+            CallEntryPoint, CallType, EntryPointExecutionContext,
+            SierraGasRevertTracker,
+        },
     },
     state::{
         errors::StateError,
@@ -19,18 +21,23 @@ use blockifier::{
     },
     versioned_constants::VersionedConstants,
 };
+use cairo_lang_starknet_classes::casm_contract_class::CasmContractClass;
 use starknet_api::{
-    block::{BlockNumber as StarknetBlockNumber, BlockTimestamp},
+    block::{
+        BlockInfo, BlockNumber as StarknetBlockNumber, BlockTimestamp,
+        GasPriceVector, GasPrices, NonzeroGasPrice,
+    },
+    contract_class::{ContractClass, EntryPointType},
     core::{
         ChainId as BlockifierChainId, ClassHash, CompiledClassHash,
         ContractAddress, EntryPointSelector, Nonce,
     },
-    deprecated_contract_class::EntryPointType,
+    execution_resources::GasAmount,
     hash::StarkHash,
     state::StorageKey as StarknetStorageKey,
     transaction::{
-        Calldata, Fee, TransactionHash, TransactionSignature,
-        TransactionVersion,
+        fields::{Calldata, Fee, TransactionSignature},
+        TransactionHash, TransactionVersion,
     },
 };
 use starknet_types_core::felt::Felt as StarkFelt;
@@ -61,17 +68,21 @@ pub fn call<T: gen::client::blocking::HttpClient>(
 
     let entry_point_selector: StarkFelt = entry_point_selector.try_into()?;
 
-    let one = NonZeroU128::new(1)
-        .ok_or_else(|| Error::Custom("NonZeroU128 is zero"))?;
     let block_info = BlockInfo {
         block_number: StarknetBlockNumber::default(),
         block_timestamp: BlockTimestamp::default(),
         sequencer_address: ContractAddress::default(),
         gas_prices: GasPrices {
-            eth_l1_gas_price: one,
-            strk_l1_gas_price: one,
-            eth_l1_data_gas_price: one,
-            strk_l1_data_gas_price: one,
+            eth_gas_prices: GasPriceVector {
+                l1_gas_price: NonzeroGasPrice::MIN,
+                l1_data_gas_price: NonzeroGasPrice::MIN,
+                l2_gas_price: NonzeroGasPrice::MIN,
+            },
+            strk_gas_prices: GasPriceVector {
+                l1_gas_price: NonzeroGasPrice::MIN,
+                l1_data_gas_price: NonzeroGasPrice::MIN,
+                l2_gas_price: NonzeroGasPrice::MIN,
+            },
         },
         use_kzg_da: false,
     };
@@ -116,7 +127,8 @@ pub fn call<T: gen::client::blocking::HttpClient>(
         tx_context.clone(),
         ExecutionMode::Execute,
         limit_steps_by_resources,
-    )?;
+        SierraGasRevertTracker::new(GasAmount::MAX),
+    );
 
     let call_entry_point = CallEntryPoint {
         class_hash: None,
@@ -131,13 +143,19 @@ pub fn call<T: gen::client::blocking::HttpClient>(
     };
 
     let state_proxy: StateProxy<T> = StateProxy { client, state };
+
+    tracing::debug!("State information:");
+    tracing::debug!("  Block number: {}", state_proxy.state.block_number);
+    tracing::debug!("  Block hash: {:?}", state_proxy.state.block_hash);
+    tracing::debug!("  Root: {:?}", state_proxy.state.root);
+
     let mut state_proxy = cache::CachedState::new(state_proxy);
 
     let mut resources = Default::default();
     let call_info = call_entry_point.execute(
         &mut state_proxy,
-        &mut resources,
         &mut context,
+        &mut resources,
     )?;
 
     tracing::debug!(?call_info, "call completed");
@@ -246,11 +264,12 @@ impl<T: gen::client::blocking::HttpClient> StateReader for StateProxy<T> {
         Ok(ClassHash(ret.try_into()?))
     }
 
-    fn get_compiled_contract_class(
+    fn get_compiled_class(
         &self,
         class_hash: ClassHash,
-    ) -> StateResult<ContractClass> {
-        tracing::info!(?class_hash, "get_compiled_contract_class");
+    ) -> Result<RunnableCompiledClass, blockifier::state::errors::StateError>
+    {
+        tracing::info!(?class_hash, "get_compiled_class");
 
         let block_id = gen::BlockId::BlockHash {
             block_hash: gen::BlockHash(self.state.block_hash.clone()),
@@ -263,7 +282,27 @@ impl<T: gen::client::blocking::HttpClient> StateReader for StateProxy<T> {
             .getClass(block_id, class_hash)
             .map_err(Into::<Error>::into)?;
 
-        Ok(ret.try_into()?)
+        // Convert to blockifier's ContractClass via explicit variant conversion
+        let contract_class = match ret {
+            gen::GetClassResult::ContractClass(contract_class) => {
+                let sierra_version = contract_class.contract_class_version.parse()
+                    .map_err(|_| Error::Custom("Failed to parse SierraVersion"))?;
+                let casm_class = CasmContractClass::from_contract_class(contract_class.into(), true, u32::MAX as usize)
+                    .map_err(|_| Error::Custom("Failed to convert Sierra program"))?;
+                ContractClass::V1((casm_class, sierra_version))
+            }
+            // TODO: add cairo 0 support
+            //     deprecated_contract_class
+            //     // let deprecated: blockifier::execution::contract_class::ContractClassV0 =
+            //     //     deprecated_contract_class.try_into().map_err(|_| Error::Custom("Failed to convert DeprecatedContractClass"))?;
+            //     // ContractClass::V0(deprecated_contract_class)
+            // }
+            _ => return Err(Error::Custom("Failed to convert DeprecatedContractClass").into()),
+        };
+        let runnable_compiled_class =
+            RunnableCompiledClass::try_from(contract_class)?;
+
+        Ok(runnable_compiled_class)
     }
 
     fn get_compiled_class_hash(
@@ -306,9 +345,9 @@ impl<T: gen::client::blocking::HttpClient> BlockifierState for StateProxy<T> {
     fn set_contract_class(
         &mut self,
         class_hash: ClassHash,
-        contract_class: ContractClass,
+        _contract_class: blockifier::execution::contract_class::RunnableCompiledClass,
     ) -> StateResult<()> {
-        tracing::info!(?class_hash, ?contract_class, "set_contract_class");
+        tracing::info!(?class_hash, "set_contract_class");
         Ok(())
     }
 
@@ -323,9 +362,5 @@ impl<T: gen::client::blocking::HttpClient> BlockifierState for StateProxy<T> {
             "set_compiled_class_hash"
         );
         Ok(())
-    }
-
-    fn add_visited_pcs(&mut self, class_hash: ClassHash, pcs: &HashSet<usize>) {
-        tracing::info!(?class_hash, pcs.len = pcs.len(), "add_visited_pcs");
     }
 }

@@ -18,7 +18,8 @@ pub mod gen {
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
     pub struct BinaryNode {
-        pub binary: BinaryNodeBinary,
+        pub node: BinaryNodeBinary,
+        pub node_hash: Felt,
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -820,19 +821,15 @@ pub mod gen {
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
     pub struct EdgeNode {
-        pub edge: EdgeNodeEdge,
+        pub node: EdgeNodeEdge,
+        pub node_hash: Felt,
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
     pub struct EdgeNodeEdge {
         pub child: Felt,
-        pub path: EdgeNodePath,
-    }
-
-    #[derive(Clone, Debug, Deserialize, Serialize)]
-    pub struct EdgeNodePath {
-        pub len: i64,
-        pub value: Felt,
+        pub path: Felt,
+        pub length: i64,
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -1487,7 +1484,19 @@ pub mod gen {
         Fri,
     }
 
-    type Proof = Vec<Node>;
+    #[derive(Clone, Debug, Deserialize, Serialize)]
+    pub struct ContractLeafData {
+        pub class_hash: Felt,
+        pub nonce: Felt,
+        pub storage_root: Felt,
+    }
+
+    #[derive(Clone, Debug, Deserialize, Serialize)]
+    pub struct ProofData {
+        pub nodes: Vec<Node>,
+        pub contract_leaves_data: Vec<ContractLeafData>,
+    }
+    type Proof = ProofData;
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
     pub struct ReplacedClass {
@@ -2194,28 +2203,18 @@ pub mod gen {
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
-    pub struct ContractData {
-        pub class_hash: Felt,
-        pub contract_state_hash_version: Felt,
-        pub nonce: Felt,
-        pub root: Felt,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[serde(default)]
-        pub storage_proofs: Option<Vec<Proof>>,
+    pub struct GlobalRoots {
+        pub block_hash: Felt,
+        pub classes_tree_root: Felt,
+        pub contracts_tree_root: Felt
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
     pub struct GetProofResult {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[serde(default)]
-        pub class_commitment: Option<Felt>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[serde(default)]
-        pub contract_data: Option<ContractData>,
-        pub contract_proof: Proof,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[serde(default)]
-        pub state_commitment: Option<Felt>,
+        pub classes_proof: Vec<Node>,
+        pub contracts_proof: Proof,
+        pub contracts_storage_proofs: Vec<Vec<Node>>,
+        pub global_roots: GlobalRoots,
     }
 
     pub mod error {
@@ -2300,6 +2299,9 @@ pub mod gen {
 
         /// The version of the pathfinder node hosting this API.
         async fn version(&self) -> std::result::Result<String, jsonrpc::Error>;
+
+        /// Get the state root of the latest block
+        async fn getStateRoot(&self) -> std::result::Result<Felt, jsonrpc::Error>;
 
         /// Submit a new class declaration transaction
         async fn addDeclareTransaction(
@@ -3637,6 +3639,32 @@ pub mod gen {
         }
     }
 
+    async fn handle_getStateRoot<RPC: Rpc>(
+        rpc: &RPC,
+        _params: &Value,
+    ) -> jsonrpc::Response {
+        match rpc.getStateRoot().await {
+            Ok(ret) => match serde_json::to_value(ret) {
+                Ok(ret) => jsonrpc::Response::result(ret),
+                Err(e) => jsonrpc::Response::error(1003, &format!("{e:?}")),
+            },
+            Err(e) => jsonrpc::Response::error(e.code, &e.message),
+        }
+    }
+
+    fn handle_getStateRoot_blocking<RPC: blocking::Rpc>(
+        rpc: &RPC,
+        _params: &Value,
+    ) -> jsonrpc::Response {
+        match rpc.getStateRoot() {
+            Ok(ret) => match serde_json::to_value(ret) {
+                Ok(ret) => jsonrpc::Response::result(ret),
+                Err(e) => jsonrpc::Response::error(1003, &format!("{e:?}")),
+            },
+            Err(e) => jsonrpc::Response::error(e.code, &e.message),
+        }
+    }
+
     async fn handle_syncing<RPC: Rpc>(
         rpc: &RPC,
         _params: &Value,
@@ -3745,7 +3773,7 @@ pub mod gen {
         let params = &req.params.clone().unwrap_or_default();
 
         let response = match req.method.as_str() {
-            "pathfinder_getProof" => handle_getProof(rpc, params).await,
+            "starknet_getStorageProof" => handle_getProof(rpc, params).await,
             "pathfinder_getTxStatus" => handle_getTxStatus(rpc, params).await,
             "pathfinder_version" => handle_version(rpc, params).await,
             "starknet_addDeclareTransaction" => {
@@ -3806,6 +3834,7 @@ pub mod gen {
                 handle_simulateTransactions(rpc, params).await
             }
             "starknet_specVersion" => handle_specVersion(rpc, params).await,
+            "starknet_getStateRoot" => handle_getStateRoot(rpc, params).await,
             "starknet_syncing" => handle_syncing(rpc, params).await,
             "starknet_traceBlockTransactions" => {
                 handle_traceBlockTransactions(rpc, params).await
@@ -3842,6 +3871,9 @@ pub mod gen {
 
             /// The version of the pathfinder node hosting this API.
             fn version(&self) -> std::result::Result<String, jsonrpc::Error>;
+
+            /// Get the state root of the latest block
+            fn getStateRoot(&self) -> std::result::Result<Felt, jsonrpc::Error>;
 
             /// Submit a new class declaration transaction
             fn addDeclareTransaction(
@@ -5378,7 +5410,7 @@ pub mod gen {
             let params = &req.params.clone().unwrap_or_default();
 
             let response = match req.method.as_str() {
-                "pathfinder_getProof" => handle_getProof(rpc, params),
+                "starknet_getStorageProof" => handle_getProof(rpc, params),
                 "pathfinder_getTxStatus" => handle_getTxStatus(rpc, params),
                 "pathfinder_version" => handle_version(rpc, params),
                 "starknet_addDeclareTransaction" => {
@@ -5435,6 +5467,7 @@ pub mod gen {
                     handle_simulateTransactions(rpc, params)
                 }
                 "starknet_specVersion" => handle_specVersion(rpc, params),
+                "starknet_getStateRoot" => handle_getStateRoot_blocking(rpc, params),
                 "starknet_syncing" => handle_syncing(rpc, params),
                 "starknet_traceBlockTransactions" => {
                     handle_traceBlockTransactions(rpc, params)
@@ -5507,7 +5540,7 @@ pub mod gen {
                         )
                     })?;
                 let req = jsonrpc::Request::new(
-                    "pathfinder_getProof".to_string(),
+                    "starknet_getStorageProof".to_string(),
                     params,
                 )
                 .with_id(jsonrpc::Id::Number(1));
@@ -5615,6 +5648,46 @@ pub mod gen {
 
                 if let Some(value) = res.result.take() {
                     let ret: String =
+                        serde_json::from_value(value).map_err(|e| {
+                            jsonrpc::Error::new(
+                                5002,
+                                format!("Invalid response object: {e}."),
+                            )
+                        })?;
+
+                    tracing::debug!(result=?ret, "ready");
+
+                    Ok(ret)
+                } else {
+                    tracing::error!("both error and result are missing");
+                    Err(jsonrpc::Error::new(
+                        5003,
+                        "Response missing".to_string(),
+                    ))
+                }
+            }
+
+            async fn getStateRoot(
+                &self,
+            ) -> std::result::Result<Felt, jsonrpc::Error> {
+                let req = jsonrpc::Request::new(
+                    "starknet_getStateRoot".to_string(),
+                    serde_json::Value::Array(vec![]),
+                )
+                .with_id(jsonrpc::Id::Number(1));
+
+                tracing::debug!(request=?req, "processing");
+                let mut res: jsonrpc::Response =
+                    self.http.post(&self.url, &req).await?;
+                tracing::debug!(response=?res, "processing");
+
+                if let Some(err) = res.error.take() {
+                    tracing::error!(error=?err, "failed");
+                    return Err(err);
+                }
+
+                if let Some(value) = res.result.take() {
+                    let ret: Felt =
                         serde_json::from_value(value).map_err(|e| {
                             jsonrpc::Error::new(
                                 5002,
@@ -7113,17 +7186,29 @@ pub mod gen {
                     keys: Vec<StorageKey>,
                 ) -> std::result::Result<GetProofResult, jsonrpc::Error>
                 {
-                    let args = (block_id, contract_address, keys);
+                    // Convert storage keys to strings
+                    let storage_keys: Vec<String> = keys.into_iter().map(|key| key.0).collect();
 
-                    let params: serde_json::Value = serde_json::to_value(args)
-                        .map_err(|e| {
-                            jsonrpc::Error::new(
-                                4001,
-                                format!("Invalid params: {e}."),
-                            )
-                        })?;
+                    // Create the new args structure
+                    let args = serde_json::json!([
+                        block_id,
+                        [
+                            // class hash
+                        ],
+                        [
+                            contract_address.0.0
+                        ],
+                        [
+                            {
+                                "contract_address": contract_address.0.0,
+                                "storage_keys": storage_keys
+                            }
+                        ]
+                    ]);
+
+                    let params: serde_json::Value = args;
                     let req = jsonrpc::Request::new(
-                        "pathfinder_getProof".to_string(),
+                        "starknet_getStorageProof".to_string(),
                         params,
                     )
                     .with_id(jsonrpc::Id::Number(1));
@@ -7232,6 +7317,46 @@ pub mod gen {
 
                     if let Some(value) = res.result.take() {
                         let ret: String = serde_json::from_value(value)
+                            .map_err(|e| {
+                                jsonrpc::Error::new(
+                                    5002,
+                                    format!("Invalid response object: {e}."),
+                                )
+                            })?;
+
+                        tracing::debug!(result=?ret, "ready");
+
+                        Ok(ret)
+                    } else {
+                        tracing::error!("both error and result are missing");
+                        Err(jsonrpc::Error::new(
+                            5003,
+                            "Response missing".to_string(),
+                        ))
+                    }
+                }
+
+                fn getStateRoot(
+                    &self,
+                ) -> std::result::Result<Felt, jsonrpc::Error> {
+                    let req = jsonrpc::Request::new(
+                        "starknet_getStateRoot".to_string(),
+                        serde_json::Value::Array(vec![]),
+                    )
+                    .with_id(jsonrpc::Id::Number(1));
+
+                    tracing::debug!(request=?req, "processing");
+                    let mut res: jsonrpc::Response =
+                        self.http.post(&self.url, &req)?;
+                    tracing::debug!(response=?res, "processing");
+
+                    if let Some(err) = res.error.take() {
+                        tracing::error!(error=?err, "failed");
+                        return Err(err);
+                    }
+
+                    if let Some(value) = res.result.take() {
+                        let ret: Felt = serde_json::from_value(value)
                             .map_err(|e| {
                                 jsonrpc::Error::new(
                                     5002,

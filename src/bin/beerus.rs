@@ -59,10 +59,15 @@ async fn main() -> eyre::Result<()> {
 
 #[cfg(not(tarpaulin_include))] // exclude from code-coverage report
 async fn get_config() -> eyre::Result<ServerConfig> {
-    let path = std::env::args().nth(1);
-    let config = if let Some(path) = path {
-        ServerConfig::from_file(&path)?
+    let args: Vec<String> = std::env::args().collect();
+    let config = if args.len() > 2 && args[1] == "-c" {
+        // Handle -c flag followed by config file path
+        ServerConfig::from_file(&args[2])?
+    } else if args.len() > 1 {
+        // Handle config file path as first argument (without -c flag)
+        ServerConfig::from_file(&args[1])?
     } else {
+        // Fall back to environment variables
         ServerConfig::from_env()?
     };
     config.validate()?;

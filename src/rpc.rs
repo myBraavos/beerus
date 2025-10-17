@@ -528,6 +528,11 @@ impl gen::Rpc for Context {
     async fn version(&self) -> std::result::Result<String, jsonrpc::Error> {
         self.client.version().await
     }
+
+    async fn getStateRoot(&self) -> std::result::Result<Felt, jsonrpc::Error> {
+        let state = self.get_state(BlockId::BlockTag(BlockTag::Latest)).await?;
+        Ok(state.root)
+    }
 }
 
 #[cfg(test)]

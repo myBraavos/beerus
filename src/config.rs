@@ -2,7 +2,7 @@ use std::fs;
 use std::net::SocketAddr;
 use std::path::Path;
 
-use eyre::{eyre, Context, Result};
+use eyre::{Context, Result};
 
 use serde::Deserialize;
 use validator::Validate;
@@ -11,8 +11,6 @@ use validator::Validate;
 const DEFAULT_DATA_DIR: &str = "tmp";
 const DEFAULT_POLL_SECS: u64 = 30;
 
-pub const MAINNET_STARKNET_CHAINID: &str = "0x534e5f4d41494e";
-pub const SEPOLIA_STARKNET_CHAINID: &str = "0x534e5f5345504f4c4941";
 
 #[derive(Clone, Deserialize, Debug, Validate)]
 pub struct ServerConfig {
@@ -29,8 +27,6 @@ pub struct ServerConfig {
 pub struct Config {
     #[validate(url)]
     pub starknet_rpc: String,
-    #[validate(url)]
-    pub gateway_url: Option<String>,
     #[cfg(not(target_arch = "wasm32"))]
     #[serde(default = "default_data_dir")]
     pub data_dir: String,
@@ -65,7 +61,6 @@ impl ServerConfig {
             client: Config {
                 starknet_rpc: std::env::var("STARKNET_RPC")
                     .context("STARKNET_RPC env var missing")?,
-                gateway_url: std::env::var("GATEWAY_URL").ok(),
                 #[cfg(not(target_arch = "wasm32"))]
                 data_dir: std::env::var("DATA_DIR")
                     .unwrap_or_else(|_| default_data_dir()),
@@ -81,14 +76,6 @@ impl ServerConfig {
     }
 }
 
-pub async fn get_gateway_url(starknet_rpc: &str) -> Result<&'static str> {
-    let chain_id = call_method(starknet_rpc, "starknet_chainId").await?;
-    match chain_id.as_str() {
-        MAINNET_STARKNET_CHAINID => Ok("https://alpha-mainnet.starknet.io"),
-        SEPOLIA_STARKNET_CHAINID => Ok("https://alpha-sepolia.starknet.io"),
-        _ => eyre::bail!("Unexpected chain id: {}", chain_id),
-    }
-}
 
 pub fn check_data_dir<P: AsRef<Path>>(path: &P) -> Result<()> {
     let path = path.as_ref();
@@ -105,33 +92,6 @@ pub fn check_data_dir<P: AsRef<Path>>(path: &P) -> Result<()> {
     Ok(())
 }
 
-async fn call_method(url: &str, method: &str) -> Result<String> {
-    let response: serde_json::Value = reqwest::Client::new()
-        .post(url)
-        .json(&serde_json::json!({
-            "jsonrpc": "2.0",
-            "method": method,
-            "params": [],
-            "id": 0
-        }))
-        .send()
-        .await?
-        .json()
-        .await?;
-
-    if let Some(error) = response["error"].as_str() {
-        eyre::bail!("rpc error: {error}");
-    }
-    if let Some(error) = response["error"].as_object() {
-        let error = serde_json::to_string(error)?;
-        eyre::bail!("rpc error: {error}");
-    }
-
-    response["result"]
-        .as_str()
-        .map(|result| result.to_owned())
-        .ok_or_else(|| eyre!("Result missing for method={method}"))
-}
 
 #[cfg(test)]
 mod tests {
@@ -142,7 +102,6 @@ mod tests {
         let config = ServerConfig {
             client: Config {
                 starknet_rpc: "bar".to_string(),
-                gateway_url: None,
                 data_dir: Default::default(),
             },
             poll_secs: 300,
@@ -159,7 +118,6 @@ mod tests {
         let config = ServerConfig {
             client: Config {
                 starknet_rpc: "bar".to_string(),
-                gateway_url: None,
                 data_dir: Default::default(),
             },
             poll_secs: 9999,

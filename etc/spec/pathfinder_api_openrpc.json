@@ -20,7 +20,7 @@
             }
         },
         {
-            "name": "pathfinder_getProof",
+            "name": "starknet_getStorageProof",
             "summary": "Returns merkle proofs of a contract's storage state",
             "description": "This method returns merkle proofs for a contract's storage. This allows you to verify a contract's state for a specific Starknet block.",
             "params": [
@@ -31,7 +31,7 @@
                     "schema": {
                         "$ref": "#/components/schemas/BLOCK_ID"
                     }
-                }, 
+                },
                 {
                     "name": "contract_address",
                     "description": "The address of the contract",
@@ -39,7 +39,7 @@
                     "schema": {
                         "$ref": "#/components/schemas/ADDRESS"
                     }
-                }, 
+                },
                 {
                     "name": "keys",
                     "description": "The storage element addresses to gather proofs for",
@@ -68,7 +68,7 @@
                             "title": "The root of the class commitment tree",
                             "$ref": "#/components/schemas/FELT"
                         },
-                        "contract_proof": {
+                        "contracts_proof": {
                             "title": "Proof of the contract state hash",
                             "$ref": "#/components/schemas/PROOF"
                         },
@@ -101,14 +101,14 @@
                                 }
                             },
                             "required": [
-                                "class_hash", 
-                                "nonce", 
-                                "root", 
+                                "class_hash",
+                                "nonce",
+                                "root",
                                 "contract_state_hash_version"
                             ]
                         }
                     },
-                    "required": ["contract_proof"]
+                    "required": ["contracts_proof"]
                 }
             },
             "errors": [
@@ -155,7 +155,7 @@
                 "oneOf": [
                     {
                         "$ref": "#/components/schemas/BINARY_NODE"
-                    }, 
+                    },
                     {
                         "$ref": "#/components/schemas/EDGE_NODE"
                     }

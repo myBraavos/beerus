@@ -1,11 +1,10 @@
 use eyre::Result;
 
-use crate::config::{get_gateway_url, Config};
-use crate::feeder::GatewayClient;
+use crate::config::Config;
 use crate::gen::client::Client as StarknetClient;
-use crate::gen::{gen, Felt, FunctionCall, Rpc};
+use crate::gen::{gen, Felt, FunctionCall, Rpc, BlockId, BlockTag};
 
-const RPC_SPEC_VERSION: &str = "0.7.1";
+const RPC_SPEC_VERSION: &str = "0.9.0";
 
 #[derive(Debug, Clone)]
 pub struct State {
@@ -93,7 +92,8 @@ impl gen::client::blocking::HttpClient for Http {
                 .map_err(|e| {
                     iamgroot::jsonrpc::Error::new(33101, e.to_string())
                 })?
-                .into_json()
+                .body_mut()
+                .read_json()
                 .map_err(|e| {
                     iamgroot::jsonrpc::Error::new(33102, e.to_string())
                 })
@@ -108,7 +108,6 @@ pub struct Client<
         + 'static,
 > {
     starknet: StarknetClient<T>,
-    gateway: GatewayClient,
     http: T,
 }
 
@@ -125,13 +124,7 @@ impl<
         if rpc_spec_version != RPC_SPEC_VERSION {
             eyre::bail!("RPC spec version mismatch: expected {RPC_SPEC_VERSION} but got {rpc_spec_version}");
         }
-        let url = if let Some(url) = config.gateway_url.as_ref() {
-            url.as_str()
-        } else {
-            get_gateway_url(&config.starknet_rpc).await?
-        };
-        let gateway = GatewayClient::new(url)?;
-        Ok(Self { starknet, gateway, http })
+        Ok(Self { starknet, http })
     }
 
     pub fn starknet(&self) -> &StarknetClient<T> {
@@ -158,7 +151,17 @@ impl<
     }
 
     pub async fn get_state(&self) -> Result<State> {
-        self.gateway.get_state().await
+        let block_id = BlockId::BlockTag(BlockTag::Latest);
+        let block = self.starknet.getBlockWithTxHashes(block_id).await?;
+        let gen::GetBlockWithTxHashesResult::BlockWithTxHashes(block) = block
+        else {
+            eyre::bail!("Pending block received, which is not supported");
+        };
+        Ok(State {
+            block_number: *block.block_header.block_number.as_ref() as u64,
+            block_hash: block.block_header.block_hash.0,
+            root: block.block_header.new_root,
+        })
     }
 }
 

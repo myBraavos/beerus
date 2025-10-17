@@ -1,5 +1,4 @@
-gateway_url = "https://alpha-mainnet.starknet.io"
-starknet_rpc = "https://starknet-mainnet.g.alchemy.com/starknet/version/rpc/v0.6/<YOUR API KEY>"
+starknet_rpc = "https://starknet-mainnet.public.blastapi.io/rpc/v0_9"
 data_dir = "tmp"
 poll_secs = 5
 rpc_addr = "127.0.0.1:3030"

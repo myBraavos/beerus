@@ -39,9 +39,9 @@ impl beerus::gen::client::blocking::HttpClient for Http {
             })?;
         let result = self.0.as_ref()
             .call2(
-                &JsValue::null(), 
-                &JsValue::from_str(url), 
-                &JsValue::from_str(&json), 
+                &JsValue::null(),
+                &JsValue::from_str(url),
+                &JsValue::from_str(&json),
             )
             .map_err(|e| {
                 iamgroot::jsonrpc::Error::new(
@@ -129,7 +129,6 @@ impl Beerus {
         let config: dto::Config = serde_json::from_str(config_json)
             .map_err(|e| JsValue::from_str(&format!("beerus: invalid config JSON: {e:?}")))?;
         let config = beerus::config::Config {
-            gateway_url: Some(config.gateway_url),
             starknet_rpc: config.starknet_url,
         };
         let beerus = beerus::client::Client::new(&config, Http(Rc::new(f)))

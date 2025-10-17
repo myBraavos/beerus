@@ -54,7 +54,7 @@ curl -H 'Content-type: application/json' -d'{
     "method": "starknet_getStateRoot",
     "params": [],
     "id": 1
-}' http://127.0.0.1:3030
+}' http://127.0.0.1:3030/rpc
 ```
 
 The successful result should look similar to the one below:
@@ -78,7 +78,7 @@ Beerus relies on Starknet RPC service provider and on Feeder Gateway URL.
 ##### Starknet RPC endpoint
 Beerus expects serving the [v0.7.1 of the Starknet OpenRPC specs](https://github.com/starkware-libs/starknet-specs/tree/v0.7.1).
 
-Starknet RPC provider must also support the [Pathfinder's extension API](https://github.com/eqlabs/pathfinder#pathfinder-extension-api) `pathfinder_getProof` endpoint. 
+Starknet RPC provider must also support the [Pathfinder's extension API](https://github.com/eqlabs/pathfinder#pathfinder-extension-api) `pathfinder_getProof` endpoint.
 
 You can check if the provider is compatible by running this command:
 ```bash
@@ -91,7 +91,33 @@ curl --request POST \
 {
   "id": 1,
   "jsonrpc": "2.0",
-  "method": "pathfinder_getProof",
+  "method": "starknet_getStorageProof",
+  "params": [
+    {
+      "block_number": 3023044
+    },
+    [
+      "0x00e2eb8f5672af4e6a4e8a8f1b44989685e668489b0a25437733756c5a34a1d6"
+    ],
+    [
+      "0x07cb0dca5767f238b056665d2f8350e83a2dee7eac8ec65e66bbc790a4fece8a"
+    ],
+    [
+      {
+        "contract_address": "0x07cb0dca5767f238b056665d2f8350e83a2dee7eac8ec65e66bbc790a4fece8a",
+        "storage_keys": [
+          "0x01d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"
+        ]
+      }
+    ]
+  ],
+  "id": 1
+}
+'
+{
+  "id": 1,
+  "jsonrpc": "2.0",
+  "method": "starknet_getStorageProof",
   "params": [
     {
       "block_number": 56072
@@ -102,7 +128,6 @@ curl --request POST \
     ]
   ]
 }
-'
 ```
 
 If you get a response similar to the one below, then the provider is **not compatible**.
