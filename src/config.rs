@@ -3,26 +3,40 @@ use std::net::SocketAddr;
 use std::path::Path;
 
 use eyre::{Context, Result};
-
 use serde::Deserialize;
 use validator::Validate;
 
-#[cfg(not(target_arch = "wasm32"))]
-const DEFAULT_DATA_DIR: &str = "tmp";
-const DEFAULT_POLL_SECS: u64 = 30;
+/// Configuration constants
+mod constants {
+    #[cfg(not(target_arch = "wasm32"))]
+    pub const DEFAULT_DATA_DIR: &str = "tmp";
+    pub const DEFAULT_POLL_SECS: u64 = 30;
+    pub const DEFAULT_RPC_PORT: u16 = 3030;
+    pub const MIN_POLL_SECS: u64 = 1;
+    pub const MAX_POLL_SECS: u64 = 3600;
+}
 
+/// Environment variable names
+mod env_vars {
+    pub const STARKNET_RPC: &str = "STARKNET_RPC";
+    pub const DATA_DIR: &str = "DATA_DIR";
+    pub const POLL_SECS: &str = "POLL_SECS";
+    pub const RPC_ADDR: &str = "RPC_ADDR";
+}
 
+/// Server configuration containing both client and server settings
 #[derive(Clone, Deserialize, Debug, Validate)]
 pub struct ServerConfig {
     #[serde(flatten)]
     pub client: Config,
     #[serde(default = "default_poll_secs")]
-    #[validate(range(min = 1, max = 3600))]
+    #[validate(range(min = "constants::MIN_POLL_SECS", max = "constants::MAX_POLL_SECS"))]
     pub poll_secs: u64,
     #[serde(default = "default_rpc_addr")]
     pub rpc_addr: SocketAddr,
 }
 
+/// Client configuration for Starknet connection
 #[derive(Clone, Deserialize, Debug, Validate)]
 pub struct Config {
     #[validate(url)]
@@ -32,100 +46,162 @@ pub struct Config {
     pub data_dir: String,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-fn default_data_dir() -> String {
-    DEFAULT_DATA_DIR.to_owned()
-}
-
-fn default_poll_secs() -> u64 {
-    DEFAULT_POLL_SECS
-}
-
-fn default_rpc_addr() -> SocketAddr {
-    SocketAddr::from(([0, 0, 0, 0], 3030))
-}
-
 impl ServerConfig {
+    /// Create configuration from environment variables
     pub fn from_env() -> Result<Self> {
-        let poll_secs = if let Ok(poll_secs) = std::env::var("POLL_SECS") {
-            poll_secs.parse()?
-        } else {
-            DEFAULT_POLL_SECS
-        };
-        let rpc_addr = if let Ok(rpc_addr) = std::env::var("RPC_ADDR") {
-            rpc_addr.parse()?
-        } else {
-            default_rpc_addr()
-        };
+        let poll_secs = Self::parse_poll_secs_from_env()?;
+        let rpc_addr = Self::parse_rpc_addr_from_env()?;
+
         Ok(Self {
             client: Config {
-                starknet_rpc: std::env::var("STARKNET_RPC")
-                    .context("STARKNET_RPC env var missing")?,
+                starknet_rpc: Self::parse_starknet_rpc_from_env()?,
                 #[cfg(not(target_arch = "wasm32"))]
-                data_dir: std::env::var("DATA_DIR")
-                    .unwrap_or_else(|_| default_data_dir()),
+                data_dir: Self::parse_data_dir_from_env(),
             },
             poll_secs,
             rpc_addr,
         })
     }
 
+    /// Create configuration from TOML file
     pub fn from_file(path: &str) -> Result<Self> {
-        let content = fs::read_to_string(path)?;
-        Ok(toml::from_str(&content)?)
+        let content = fs::read_to_string(path)
+            .context("Failed to read config file")?;
+        let config: ServerConfig = toml::from_str(&content)
+            .context("Failed to parse config file")?;
+        config.validate()
+            .context("Configuration validation failed")?;
+        Ok(config)
+    }
+
+    /// Parse poll seconds from environment variable
+    fn parse_poll_secs_from_env() -> Result<u64> {
+        match std::env::var(env_vars::POLL_SECS) {
+            Ok(value) => {
+                let poll_secs = value.parse()
+                    .context("Invalid POLL_SECS value")?;
+                if poll_secs < constants::MIN_POLL_SECS || poll_secs > constants::MAX_POLL_SECS {
+                    eyre::bail!("POLL_SECS must be between {} and {}",
+                               constants::MIN_POLL_SECS, constants::MAX_POLL_SECS);
+                }
+                Ok(poll_secs)
+            }
+            Err(_) => Ok(constants::DEFAULT_POLL_SECS),
+        }
+    }
+
+    /// Parse RPC address from environment variable
+    fn parse_rpc_addr_from_env() -> Result<SocketAddr> {
+        match std::env::var(env_vars::RPC_ADDR) {
+            Ok(value) => value.parse()
+                .context("Invalid RPC_ADDR format"),
+            Err(_) => Ok(default_rpc_addr()),
+        }
+    }
+
+    /// Parse Starknet RPC URL from environment variable
+    fn parse_starknet_rpc_from_env() -> Result<String> {
+        std::env::var(env_vars::STARKNET_RPC)
+            .context("STARKNET_RPC environment variable is required")
+    }
+
+    /// Parse data directory from environment variable
+    #[cfg(not(target_arch = "wasm32"))]
+    fn parse_data_dir_from_env() -> String {
+        std::env::var(env_vars::DATA_DIR)
+            .unwrap_or_else(|_| default_data_dir())
     }
 }
 
+/// Default data directory
+#[cfg(not(target_arch = "wasm32"))]
+fn default_data_dir() -> String {
+    constants::DEFAULT_DATA_DIR.to_owned()
+}
 
-pub fn check_data_dir<P: AsRef<Path>>(path: &P) -> Result<()> {
+/// Default poll interval in seconds
+fn default_poll_secs() -> u64 {
+    constants::DEFAULT_POLL_SECS
+}
+
+/// Default RPC server address
+fn default_rpc_addr() -> SocketAddr {
+    SocketAddr::from(([0, 0, 0, 0], constants::DEFAULT_RPC_PORT))
+}
+
+/// Validate that a data directory exists and is writable
+pub fn validate_data_dir<P: AsRef<Path>>(path: &P) -> Result<()> {
     let path = path.as_ref();
+
     if !path.exists() {
-        eyre::bail!("path does not exist");
-    };
+        eyre::bail!("Data directory does not exist: {}", path.display());
+    }
 
-    let meta = path.metadata().context("path metadata is missing")?;
+    let metadata = path.metadata()
+        .context("Failed to read data directory metadata")?;
 
-    if meta.permissions().readonly() {
-        eyre::bail!("path is readonly");
+    if !metadata.is_dir() {
+        eyre::bail!("Path is not a directory: {}", path.display());
+    }
+
+    if metadata.permissions().readonly() {
+        eyre::bail!("Data directory is read-only: {}", path.display());
     }
 
     Ok(())
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn wrong_urls() {
+    #[test]
+    fn test_invalid_starknet_rpc_url() {
         let config = ServerConfig {
             client: Config {
-                starknet_rpc: "bar".to_string(),
-                data_dir: Default::default(),
+                starknet_rpc: "invalid-url".to_string(),
+                #[cfg(not(target_arch = "wasm32"))]
+                data_dir: "test".to_string(),
             },
             poll_secs: 300,
             rpc_addr: SocketAddr::from(([0, 0, 0, 0], 3030)),
         };
-        let response = config.client.validate();
 
-        assert!(response.is_err());
-        assert!(response.unwrap_err().to_string().contains("starknet_rpc"));
+        let result = config.client.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("starknet_rpc"));
     }
 
-    #[tokio::test]
-    async fn wrong_poll_secs() {
+    #[test]
+    fn test_invalid_poll_secs_range() {
         let config = ServerConfig {
             client: Config {
-                starknet_rpc: "bar".to_string(),
-                data_dir: Default::default(),
+                starknet_rpc: "https://example.com".to_string(),
+                #[cfg(not(target_arch = "wasm32"))]
+                data_dir: "test".to_string(),
             },
-            poll_secs: 9999,
+            poll_secs: 9999, // Too high
             rpc_addr: SocketAddr::from(([127, 0, 0, 1], 3030)),
         };
-        let response = config.validate();
 
-        assert!(response.is_err());
-        assert!(response.unwrap_err().to_string().contains("poll_secs"));
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("poll_secs"));
+    }
+
+    #[test]
+    fn test_valid_config() {
+        let config = ServerConfig {
+            client: Config {
+                starknet_rpc: "https://example.com".to_string(),
+                #[cfg(not(target_arch = "wasm32"))]
+                data_dir: "test".to_string(),
+            },
+            poll_secs: 300,
+            rpc_addr: SocketAddr::from(([127, 0, 0, 1], 3030)),
+        };
+
+        let result = config.validate();
+        assert!(result.is_ok());
     }
 }

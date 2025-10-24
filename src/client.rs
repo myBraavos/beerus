@@ -4,103 +4,17 @@ use crate::config::Config;
 use crate::gen::client::Client as StarknetClient;
 use crate::gen::{gen, Felt, FunctionCall, Rpc, BlockId, BlockTag};
 
+pub mod http;
+pub mod state;
+pub mod utils;
+
+pub use http::Http;
+pub use state::State;
+pub use utils::as_felt;
+
 const RPC_SPEC_VERSION: &str = "0.9.0";
 
-#[derive(Debug, Clone)]
-pub struct State {
-    pub block_number: u64,
-    pub block_hash: Felt,
-    pub root: Felt,
-}
-
-async fn post<Q: serde::Serialize, R: serde::de::DeserializeOwned>(
-    client: &reqwest::Client,
-    url: &str,
-    request: Q,
-) -> std::result::Result<R, iamgroot::jsonrpc::Error> {
-    let response = client
-        .post(url)
-        .json(&request)
-        .send()
-        .await
-        .map_err(|e| {
-            iamgroot::jsonrpc::Error::new(
-                32101,
-                format!("request failed: {e:?}"),
-            )
-        })?
-        .json()
-        .await
-        .map_err(|e| {
-            iamgroot::jsonrpc::Error::new(
-                32102,
-                format!("invalid response: {e:?}"),
-            )
-        })?;
-    Ok(response)
-}
-
-impl PartialEq<State> for State {
-    fn eq(&self, other: &State) -> bool {
-        self.block_number == other.block_number
-            && self.root.as_ref() == other.root.as_ref()
-            && self.block_hash.as_ref() == other.block_hash.as_ref()
-    }
-}
-
-#[derive(Clone)]
-pub struct Http(pub reqwest::Client);
-
-impl Http {
-    #[allow(clippy::new_without_default)]
-    pub fn new() -> Self {
-        Self(reqwest::Client::new())
-    }
-}
-
-#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
-impl gen::client::HttpClient for Http {
-    async fn post(
-        &self,
-        url: &str,
-        request: &iamgroot::jsonrpc::Request,
-    ) -> std::result::Result<
-        iamgroot::jsonrpc::Response,
-        iamgroot::jsonrpc::Error,
-    > {
-        post(&self.0, url, request).await
-    }
-}
-
-impl gen::client::blocking::HttpClient for Http {
-    fn post(
-        &self,
-        url: &str,
-        request: &iamgroot::jsonrpc::Request,
-    ) -> std::result::Result<
-        iamgroot::jsonrpc::Response,
-        iamgroot::jsonrpc::Error,
-    > {
-        #[cfg(target_arch = "wasm32")]
-        unreachable!("Blocking HTTP attempt: url={url} request={request:?}");
-
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            ureq::post(url)
-                .send_json(request)
-                .map_err(|e| {
-                    iamgroot::jsonrpc::Error::new(33101, e.to_string())
-                })?
-                .body_mut()
-                .read_json()
-                .map_err(|e| {
-                    iamgroot::jsonrpc::Error::new(33102, e.to_string())
-                })
-        }
-    }
-}
-
+/// Main client for interacting with Starknet
 pub struct Client<
     T: gen::client::HttpClient
         + gen::client::blocking::HttpClient
@@ -118,6 +32,7 @@ impl<
             + 'static,
     > Client<T>
 {
+    /// Create a new client with the given configuration and HTTP client
     pub async fn new(config: &Config, http: T) -> Result<Self> {
         let starknet = StarknetClient::new(&config.starknet_rpc, http.clone());
         let rpc_spec_version = starknet.specVersion().await?;
@@ -127,10 +42,17 @@ impl<
         Ok(Self { starknet, http })
     }
 
+    /// Get the underlying Starknet client
     pub fn starknet(&self) -> &StarknetClient<T> {
         &self.starknet
     }
 
+    /// Get the HTTP client
+    pub fn http(&self) -> &T {
+        &self.http
+    }
+
+    /// Execute a function call on the Starknet state
     pub fn execute(
         &self,
         request: FunctionCall,
@@ -150,6 +72,7 @@ impl<
             .collect()
     }
 
+    /// Get the current state of the blockchain
     pub async fn get_state(&self) -> Result<State> {
         let block_id = BlockId::BlockTag(BlockTag::Latest);
         let block = self.starknet.getBlockWithTxHashes(block_id).await?;
@@ -157,19 +80,10 @@ impl<
         else {
             eyre::bail!("Pending block received, which is not supported");
         };
-        Ok(State {
-            block_number: *block.block_header.block_number.as_ref() as u64,
-            block_hash: block.block_header.block_hash.0,
-            root: block.block_header.new_root,
-        })
+        Ok(State::new(
+            *block.block_header.block_number.as_ref() as u64,
+            block.block_header.block_hash.0,
+            block.block_header.new_root,
+        ))
     }
-}
-
-fn as_felt(bytes: &[u8]) -> Result<Felt> {
-    // RPC spec FELT regex: leading zeroes are not allowed
-    let hex = hex::encode(bytes);
-    let hex = hex.chars().skip_while(|c| c == &'0').collect::<String>();
-    let hex = format!("0x{hex}");
-    let felt = Felt::try_new(&hex)?;
-    Ok(felt)
 }

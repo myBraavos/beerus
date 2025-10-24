@@ -1,112 +1,147 @@
 use eyre::{Context, OptionExt, Result};
 
-use crate::{client::State, gen::Felt};
+use crate::{client::State};
 
+/// Gateway client for interacting with Starknet feeder gateway
 pub struct GatewayClient {
     url: String,
     client: reqwest::Client,
 }
 
 impl GatewayClient {
+    /// Create a new gateway client
     pub fn new(url: &str) -> Result<Self> {
         if url.ends_with('/') {
             eyre::bail!("Gateway URL must not end with '/'.");
         }
-        Ok(Self { url: url.to_owned(), client: reqwest::Client::new() })
+        Ok(Self {
+            url: url.to_owned(),
+            client: reqwest::Client::new()
+        })
     }
 
+    /// Get public key for a block
     pub async fn get_pubkey(&self, block_hash: &str) -> Result<String> {
-        let url = format!(
-            "{}/feeder_gateway/get_public_key?blockHash={}",
-            self.url, block_hash
-        );
-        let hex: String = self
-            .client
-            .get(&url)
+        let url = self.build_url("/feeder_gateway/get_public_key", &[("blockHash", block_hash)]);
+        let response = self.make_get_request(&url).await?;
+        Ok(response)
+    }
+
+    /// Get signature for a block
+    pub async fn get_signature(&self, block_hash: &str) -> Result<(String, String)> {
+        let url = self.build_url("/feeder_gateway/get_signature", &[("blockHash", block_hash)]);
+        let json = self.make_json_request(&url).await?;
+
+        self.validate_and_extract_signature(&json, block_hash)
+    }
+
+    /// Get current state from the latest block
+    pub async fn get_state(&self) -> Result<State> {
+        let url = self.build_url("/feeder_gateway/get_block", &[("blockNumber", "latest")]);
+        let json = self.make_json_request(&url).await?;
+
+        self.validate_and_extract_state(&json)
+    }
+
+    /// Build URL with query parameters
+    fn build_url(&self, path: &str, params: &[(&str, &str)]) -> String {
+        let mut url = format!("{}{}", self.url, path);
+        if !params.is_empty() {
+            url.push('?');
+            let query_string = params
+                .iter()
+                .map(|(key, value)| format!("{}={}", key, value))
+                .collect::<Vec<_>>()
+                .join("&");
+            url.push_str(&query_string);
+        }
+        url
+    }
+
+    /// Make a GET request and return text response
+    async fn make_get_request(&self, url: &str) -> Result<String> {
+        self.client
+            .get(url)
             .send()
             .await
-            .context("failed to send gateway request")?
+            .context("Failed to send gateway request")?
             .text()
             .await
-            .context("failed to receive gateway response")?;
-        Ok(hex)
+            .context("Failed to receive gateway response")
     }
 
-    pub async fn get_signature(
-        &self,
-        block_hash: &str,
-    ) -> Result<(String, String)> {
-        let url = format!(
-            "{}/feeder_gateway/get_signature?blockHash={}",
-            self.url, block_hash
-        );
-        let json: serde_json::Value = self
-            .client
-            .get(&url)
+    /// Make a GET request and return JSON response
+    async fn make_json_request(&self, url: &str) -> Result<serde_json::Value> {
+        self.client
+            .get(url)
             .send()
             .await
-            .context("failed to send gateway request")?
+            .context("Failed to send gateway request")?
             .json()
             .await
-            .context("failed to receive gateway response")?;
+            .context("Failed to receive gateway response")
+    }
 
+    /// Validate and extract signature from JSON response
+    fn validate_and_extract_signature(
+        &self,
+        json: &serde_json::Value,
+        expected_block_hash: &str,
+    ) -> Result<(String, String)> {
         let hash = json["block_hash"]
             .as_str()
-            .ok_or_eyre("gateway: invalid block hash")?;
-        if hash != block_hash {
-            eyre::bail!("gateway: invalid block hash");
+            .ok_or_eyre("Gateway: invalid block hash")?;
+
+        if hash != expected_block_hash {
+            eyre::bail!("Gateway: block hash mismatch");
         }
 
         let signature = json["signature"]
             .as_array()
-            .ok_or_eyre("gateway: invalid signature")?;
+            .ok_or_eyre("Gateway: invalid signature format")?;
+
         if signature.len() != 2 {
-            eyre::bail!("gateway: invalid signature");
+            eyre::bail!("Gateway: signature must have exactly 2 components");
         }
 
         let r = signature[0]
             .as_str()
             .map(ToOwned::to_owned)
-            .ok_or_eyre("gateway: invalid signature")?;
+            .ok_or_eyre("Gateway: invalid signature component r")?;
         let s = signature[1]
             .as_str()
             .map(ToOwned::to_owned)
-            .ok_or_eyre("gateway: invalid signature")?;
+            .ok_or_eyre("Gateway: invalid signature component s")?;
+
         Ok((r, s))
     }
 
-    pub async fn get_state(&self) -> Result<State> {
-        let url =
-            format!("{}/feeder_gateway/get_block?blockNumber=latest", self.url);
-        let json: serde_json::Value = self
-            .client
-            .get(&url)
-            .send()
-            .await
-            .context("failed to send gateway request")?
-            .json()
-            .await
-            .context("failed to receive gateway response")?;
-
+    /// Validate and extract state from JSON response
+    fn validate_and_extract_state(&self, json: &serde_json::Value) -> Result<State> {
         if json["status"].as_str() != Some("ACCEPTED_ON_L2") {
-            eyre::bail!("gateway: invalid block status");
+            eyre::bail!("Gateway: block status is not ACCEPTED_ON_L2");
         }
 
         let block_number: u64 = json["block_number"]
             .as_u64()
-            .ok_or_eyre("gateway: fetching block_number failed")?;
+            .ok_or_eyre("Gateway: missing or invalid block_number")?;
+
         let block_hash = json["block_hash"]
             .as_str()
             .map(ToOwned::to_owned)
-            .ok_or_eyre("gateway: fetching block_hash failed")?;
+            .ok_or_eyre("Gateway: missing or invalid block_hash")?;
+
         let root = json["state_root"]
             .as_str()
             .map(ToOwned::to_owned)
-            .ok_or_eyre("gateway: fetching state_root failed")?;
+            .ok_or_eyre("Gateway: missing or invalid state_root")?;
+
         Ok(State {
             block_number,
-            block_hash: Felt::try_new(&block_hash)?,
-            root: Felt::try_new(&root)?,
+            block_hash: Felt::try_new(&block_hash)
+                .context("Invalid block hash format")?,
+            root: Felt::try_new(&root)
+                .context("Invalid state root format")?,
         })
     }
 }
@@ -121,7 +156,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn test_ok() -> Result<()> {
+    async fn test_get_state_success() -> Result<()> {
         const BLOCK_NUMBER: u64 = 1056427;
         const BLOCK_HASH: &str =
             "0x7c7b366f1b31a556ace49e1affe3b4ed3cfb5aa328b85307655ea70dadd0cc6";
@@ -149,6 +184,53 @@ mod tests {
         assert_eq!(state.root.as_ref(), STATE_ROOT);
         assert_eq!(state.block_number, BLOCK_NUMBER);
         assert_eq!(state.block_hash.as_ref(), BLOCK_HASH);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_get_signature_success() -> Result<()> {
+        const BLOCK_HASH: &str = "0x1234567890abcdef";
+        const R: &str = "0xabcdef1234567890";
+        const S: &str = "0x9876543210fedcba";
+
+        let mock = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/feeder_gateway/get_signature"))
+            .and(query_param("blockHash", BLOCK_HASH))
+            .respond_with(ResponseTemplate::new(200).set_body_json(
+                serde_json::json!({
+                    "block_hash": BLOCK_HASH,
+                    "signature": [R, S]
+                }),
+            ))
+            .mount(&mock)
+            .await;
+
+        let gateway = GatewayClient::new(mock.uri().as_str())?;
+        let (r, s) = gateway.get_signature(BLOCK_HASH).await?;
+
+        assert_eq!(r, R);
+        assert_eq!(s, S);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_get_pubkey_success() -> Result<()> {
+        const BLOCK_HASH: &str = "0x1234567890abcdef";
+        const PUBKEY: &str = "0xabcdef1234567890";
+
+        let mock = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/feeder_gateway/get_public_key"))
+            .and(query_param("blockHash", BLOCK_HASH))
+            .respond_with(ResponseTemplate::new(200).set_body_string(PUBKEY))
+            .mount(&mock)
+            .await;
+
+        let gateway = GatewayClient::new(mock.uri().as_str())?;
+        let pubkey = gateway.get_pubkey(BLOCK_HASH).await?;
+
+        assert_eq!(pubkey, PUBKEY);
         Ok(())
     }
 }
