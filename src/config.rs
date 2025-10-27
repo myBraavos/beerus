@@ -19,6 +19,7 @@ mod constants {
 /// Environment variable names
 mod env_vars {
     pub const STARKNET_RPC: &str = "STARKNET_RPC";
+    pub const GATEWAY_URL: &str = "GATEWAY_URL";
     pub const DATA_DIR: &str = "DATA_DIR";
     pub const POLL_SECS: &str = "POLL_SECS";
     pub const RPC_ADDR: &str = "RPC_ADDR";
@@ -41,6 +42,8 @@ pub struct ServerConfig {
 pub struct Config {
     #[validate(url)]
     pub starknet_rpc: String,
+    #[validate(url)]
+    pub gateway_url: String,
     #[cfg(not(target_arch = "wasm32"))]
     #[serde(default = "default_data_dir")]
     pub data_dir: String,
@@ -55,6 +58,7 @@ impl ServerConfig {
         Ok(Self {
             client: Config {
                 starknet_rpc: Self::parse_starknet_rpc_from_env()?,
+                gateway_url: Self::parse_gateway_url_from_env()?,
                 #[cfg(not(target_arch = "wasm32"))]
                 data_dir: Self::parse_data_dir_from_env(),
             },
@@ -103,6 +107,12 @@ impl ServerConfig {
     fn parse_starknet_rpc_from_env() -> Result<String> {
         std::env::var(env_vars::STARKNET_RPC)
             .context("STARKNET_RPC environment variable is required")
+    }
+
+    /// Parse Gateway URL from environment variable
+    fn parse_gateway_url_from_env() -> Result<String> {
+        std::env::var(env_vars::GATEWAY_URL)
+            .context("GATEWAY_URL environment variable is required")
     }
 
     /// Parse data directory from environment variable
@@ -160,6 +170,7 @@ mod tests {
         let config = ServerConfig {
             client: Config {
                 starknet_rpc: "invalid-url".to_string(),
+                gateway_url: "".to_string(),
                 #[cfg(not(target_arch = "wasm32"))]
                 data_dir: "test".to_string(),
             },
@@ -177,6 +188,7 @@ mod tests {
         let config = ServerConfig {
             client: Config {
                 starknet_rpc: "https://example.com".to_string(),
+                gateway_url: "".to_string(),
                 #[cfg(not(target_arch = "wasm32"))]
                 data_dir: "test".to_string(),
             },
@@ -194,6 +206,7 @@ mod tests {
         let config = ServerConfig {
             client: Config {
                 starknet_rpc: "https://example.com".to_string(),
+                gateway_url: "".to_string(),
                 #[cfg(not(target_arch = "wasm32"))]
                 data_dir: "test".to_string(),
             },

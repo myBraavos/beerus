@@ -29,6 +29,8 @@ pub enum Error {
     Program(String),
     #[error("{0}")]
     Custom(&'static str),
+    #[error("parse int error: {0:?}")]
+    ParseIntError(#[from] std::num::ParseIntError),
 }
 
 impl From<Error> for blockifier::state::errors::StateError {

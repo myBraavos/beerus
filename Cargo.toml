@@ -38,12 +38,14 @@ url = "2.5.1"
 toml = "0.9.8"
 lru = "0.16.2"
 alloy-primitives = { version = "1.4.1", default-features = false }
+indexmap = "=2.12.0"
+semver = "1.0.27"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { version = "1", features = ["sync", "macros", "io-util", "rt-multi-thread", "time"] }
 
-blockifier = { git = "https://github.com/starkware-libs/sequencer.git", tag = "v0.14.0-rc.3" }
-starknet_api = { git = "https://github.com/starkware-libs/sequencer.git", tag = "v0.14.0-rc.3" }
+blockifier = { git = "https://github.com/starkware-libs/sequencer.git", branch = "v0.14.0-rc.3" }
+starknet_api = { git = "https://github.com/starkware-libs/sequencer.git", branch = "v0.14.0-rc.3" }
 cairo-lang-starknet-classes = { git = "https://github.com/starkware-libs/cairo.git", tag = "v2.10.0" }
 
 reqwest = { version = "0.12.24", default-features = false, features = ["json", "rustls-tls"] }
@@ -54,8 +56,8 @@ ureq = { version = "3.1.2", features = ["json"] }
 ## Tokio WASM support: https://docs.rs/tokio/latest/tokio/#wasm-support
 tokio = { version = "1", features = ["sync", "macros", "io-util", "rt", "time"] }
 
-blockifier = { git = "https://github.com/starkware-libs/sequencer.git", tag = "v0.14.0-rc.3" }
-starknet_api = { git = "https://github.com/starkware-libs/sequencer.git", tag = "v0.14.0-rc.3" }
+blockifier = { git = "https://github.com/starkware-libs/sequencer.git", branch = "v0.14.0-rc.3" }
+starknet_api = { git = "https://github.com/starkware-libs/sequencer.git", branch = "v0.14.0-rc.3" }
 cairo-lang-starknet-classes = { git = "https://github.com/starkware-libs/cairo.git", tag = "v2.10.0" }
 
 reqwest = { version = "0.12.3", default-features = false, features = ["json"] }

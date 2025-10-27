@@ -1,10 +1,12 @@
+use std::sync::Arc;
+
 use blockifier::{
     bouncer::BouncerConfig,
     context::{BlockContext, ChainInfo, FeeTokenAddresses, TransactionContext},
     transaction::objects::{
         CommonAccountFields, DeprecatedTransactionInfo, TransactionInfo,
     },
-    versioned_constants::VersionedConstants,
+    blockifier_versioned_constants::VersionedConstants,
 };
 use starknet_api::{
     block::{
@@ -143,7 +145,7 @@ impl ExecutionContextBuilder {
             max_fee: Fee::default(),
         });
 
-        Ok(TransactionContext { block_context, tx_info })
+        Ok(TransactionContext { block_context: Arc::new(block_context), tx_info })
     }
 }
 

@@ -57,6 +57,7 @@ pub mod gen {
         #[serde(default)]
         pub l1_data_gas_price: Option<ResourcePrice>,
         pub l1_gas_price: ResourcePrice,
+        pub l2_gas_price: ResourcePrice,
         pub new_root: Felt,
         pub parent_hash: BlockHash,
         pub sequencer_address: Felt,
@@ -125,7 +126,7 @@ pub mod gen {
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
     #[serde(try_from = "i64")]
-    pub struct BlockNumber(i64);
+    pub struct BlockNumber(pub i64);
 
     mod blocknumber {
         use super::jsonrpc;
@@ -378,7 +379,7 @@ pub mod gen {
     pub struct CommonReceiptProperties {
         pub actual_fee: FeePayment,
         pub events: Vec<Event>,
-        pub execution_resources: ExecutionResources,
+        pub execution_resources: ExecutionResourcesDataAvailability,
         pub finality_status: TxnFinalityStatus,
         pub messages_sent: Vec<MsgToL1>,
         pub transaction_hash: TxnHash,
@@ -962,6 +963,7 @@ pub mod gen {
     pub struct ExecutionResourcesDataAvailability {
         pub l1_data_gas: i64,
         pub l1_gas: i64,
+        pub l2_gas: i64,
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -984,7 +986,7 @@ pub mod gen {
         pub unit: PriceUnit,
     }
 
-    #[derive(Clone, Debug, Deserialize, Serialize)]
+    #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
     #[serde(try_from = "String")]
     pub struct Felt(String);
 
@@ -2206,7 +2208,7 @@ pub mod gen {
     pub struct GlobalRoots {
         pub block_hash: Felt,
         pub classes_tree_root: Felt,
-        pub contracts_tree_root: Felt
+        pub contracts_tree_root: Felt,
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -2301,7 +2303,9 @@ pub mod gen {
         async fn version(&self) -> std::result::Result<String, jsonrpc::Error>;
 
         /// Get the state root of the latest block
-        async fn getStateRoot(&self) -> std::result::Result<Felt, jsonrpc::Error>;
+        async fn getStateRoot(
+            &self,
+        ) -> std::result::Result<Felt, jsonrpc::Error>;
 
         /// Submit a new class declaration transaction
         async fn addDeclareTransaction(
@@ -3873,7 +3877,8 @@ pub mod gen {
             fn version(&self) -> std::result::Result<String, jsonrpc::Error>;
 
             /// Get the state root of the latest block
-            fn getStateRoot(&self) -> std::result::Result<Felt, jsonrpc::Error>;
+            fn getStateRoot(&self)
+                -> std::result::Result<Felt, jsonrpc::Error>;
 
             /// Submit a new class declaration transaction
             fn addDeclareTransaction(
@@ -5467,7 +5472,9 @@ pub mod gen {
                     handle_simulateTransactions(rpc, params)
                 }
                 "starknet_specVersion" => handle_specVersion(rpc, params),
-                "starknet_getStateRoot" => handle_getStateRoot_blocking(rpc, params),
+                "starknet_getStateRoot" => {
+                    handle_getStateRoot_blocking(rpc, params)
+                }
                 "starknet_syncing" => handle_syncing(rpc, params),
                 "starknet_traceBlockTransactions" => {
                     handle_traceBlockTransactions(rpc, params)
@@ -7187,7 +7194,8 @@ pub mod gen {
                 ) -> std::result::Result<GetProofResult, jsonrpc::Error>
                 {
                     // Convert storage keys to strings
-                    let storage_keys: Vec<String> = keys.into_iter().map(|key| key.0).collect();
+                    let storage_keys: Vec<String> =
+                        keys.into_iter().map(|key| key.0).collect();
 
                     // Create the new args structure
                     let args = serde_json::json!([
@@ -7356,8 +7364,8 @@ pub mod gen {
                     }
 
                     if let Some(value) = res.result.take() {
-                        let ret: Felt = serde_json::from_value(value)
-                            .map_err(|e| {
+                        let ret: Felt =
+                            serde_json::from_value(value).map_err(|e| {
                                 jsonrpc::Error::new(
                                     5002,
                                     format!("Invalid response object: {e}."),
@@ -8841,3 +8849,377 @@ pub mod gen {
     }
 }
 // ^^^ GENERATED CODE ABOVE ^^^
+
+// Implementation for converting Felt to GasPrice
+impl TryFrom<Felt> for starknet_api::block::GasPrice {
+    type Error = crate::exe::err::Error;
+    fn try_from(felt: Felt) -> Result<Self, Self::Error> {
+        let trimmed = felt.as_ref().trim_start_matches("0x");
+        Ok(starknet_api::block::GasPrice::from(u128::from_str_radix(
+            trimmed,
+            16,
+        )?))
+    }
+}
+
+// Implementation for converting BlockHeader to starknet_api::BlockHeaderWithoutHash
+impl TryFrom<BlockHeader> for starknet_api::block::BlockHeaderWithoutHash {
+    type Error = crate::exe::err::Error;
+    fn try_from(header: BlockHeader) -> Result<Self, Self::Error> {
+        use starknet_api::{
+            block::{BlockNumber, BlockTimestamp, GasPricePerToken},
+            core::{GlobalRoot, SequencerContractAddress},
+            data_availability::L1DataAvailabilityMode,
+            hash::StarkHash,
+        };
+        use starknet_types_core::felt::Felt as StarkFelt;
+
+        // Convert l1_da_mode
+        let l1_da_mode = match header.l1_da_mode {
+            Some(gen::BlockHeaderL1DaMode::Calldata) => {
+                L1DataAvailabilityMode::Calldata
+            }
+            Some(gen::BlockHeaderL1DaMode::Blob) => {
+                L1DataAvailabilityMode::Blob
+            }
+            None => L1DataAvailabilityMode::default(), // Default to Calldata
+        };
+
+        // Convert starknet_version from String to StarknetVersion
+        let starknet_version = starknet_api::block::StarknetVersion::try_from(
+            header.starknet_version,
+        )
+        .unwrap_or_default();
+
+        // Convert gas prices
+        let l1_gas_price = GasPricePerToken {
+            price_in_fri: header
+                .l1_gas_price
+                .price_in_fri
+                .clone()
+                .try_into()?,
+            price_in_wei: header
+                .l1_gas_price
+                .price_in_wei
+                .clone()
+                .try_into()?,
+        };
+
+        let l1_data_gas_price = GasPricePerToken {
+            price_in_fri: header
+                .l1_data_gas_price
+                .clone()
+                .unwrap_or(ResourcePrice {
+                    price_in_fri: Felt::try_new("0x0")?,
+                    price_in_wei: Felt::try_new("0x0")?,
+                })
+                .price_in_fri
+                .try_into()?,
+            price_in_wei: header
+                .l1_data_gas_price
+                .clone()
+                .unwrap_or(ResourcePrice {
+                    price_in_fri: Felt::try_new("0x0")?,
+                    price_in_wei: Felt::try_new("0x0")?,
+                })
+                .price_in_wei
+                .try_into()?,
+        };
+
+        let l2_gas_price = GasPricePerToken {
+            price_in_fri: header.l2_gas_price.price_in_fri.try_into()?,
+            price_in_wei: header.l2_gas_price.price_in_wei.try_into()?,
+        };
+
+        // NOTE: those fields are not used in hash calculation so we skip them
+        let l2_gas_consumed = 0;
+        let next_l2_gas_price = 0;
+
+        Ok(Self {
+            parent_hash: starknet_api::block::BlockHash(
+                StarkFelt::from_hex_unchecked(header.parent_hash.0.as_ref()),
+            ),
+            block_number: BlockNumber(*header.block_number.as_ref() as u64),
+            l1_gas_price,
+            l1_data_gas_price,
+            l2_gas_price,
+            l2_gas_consumed,
+            next_l2_gas_price,
+            state_root: GlobalRoot(StarkHash::from(
+                StarkFelt::from_hex_unchecked(header.new_root.as_ref()),
+            )),
+            sequencer: SequencerContractAddress(
+                starknet_api::core::ContractAddress::from(
+                    starknet_api::core::ContractAddress::try_from(
+                        StarkFelt::from_hex_unchecked(
+                            header.sequencer_address.as_ref(),
+                        ),
+                    )?,
+                ),
+            ),
+            timestamp: BlockTimestamp(*header.timestamp.as_ref() as u64),
+            l1_da_mode,
+            starknet_version,
+        })
+    }
+}
+
+// Implementation for converting StateDiff to starknet_api::StateDiff
+impl TryFrom<StateDiff> for starknet_api::state::ThinStateDiff {
+    type Error = crate::exe::err::Error;
+    fn try_from(state_diff: StateDiff) -> Result<Self, Self::Error> {
+        use indexmap::IndexMap;
+        use starknet_api::{
+            core::{
+                ClassHash, CompiledClassHash, ContractAddress, Nonce,
+                PatriciaKey,
+            },
+            deprecated_contract_class::ContractClass as DeprecatedContractClass,
+            hash::StarkHash,
+            state::{
+                SierraContractClass, StateDiff, StorageKey, ThinStateDiff,
+            },
+        };
+        use starknet_types_core::felt::Felt as StarkFelt;
+
+        let declared_classes     = state_diff
+            .declared_classes
+            .into_iter()
+            .map(|class| {
+                (
+                    ClassHash(StarkFelt::from_hex_unchecked(class.class_hash.as_ref().unwrap().as_ref())),
+                    (
+                        CompiledClassHash(StarkFelt::from_hex_unchecked(class.compiled_class_hash.as_ref().unwrap().as_ref())),
+                        SierraContractClass::default(),
+                    ),
+                )
+            })
+            .collect::<
+                IndexMap<ClassHash, (CompiledClassHash, SierraContractClass)>>();
+        let deployed_contracts = state_diff
+            .deployed_contracts
+            .into_iter()
+            .map(|contract| {
+                (
+                    ContractAddress::try_from(StarkHash::from_hex_unchecked(
+                        contract.address.as_ref(),
+                    ))
+                    .unwrap(),
+                    ClassHash(StarkHash::from_hex_unchecked(
+                        contract.class_hash.as_ref(),
+                    )),
+                )
+            })
+            .collect::<IndexMap<ContractAddress, ClassHash>>();
+        let deprecated_declared_classes = state_diff
+            .deprecated_declared_classes
+            .into_iter()
+            .map(|class| {
+                (
+                    ClassHash(StarkHash::from_hex_unchecked(class.as_ref())),
+                    DeprecatedContractClass::default(),
+                )
+            })
+            .collect::<IndexMap<ClassHash, DeprecatedContractClass>>();
+        let nonces = state_diff
+            .nonces
+            .into_iter()
+            .map(|nonce| {
+                (
+                    ContractAddress::try_from(StarkHash::from_hex_unchecked(
+                        nonce.contract_address.unwrap().0.as_ref(),
+                    ))
+                    .unwrap(),
+                    Nonce(StarkHash::from_hex_unchecked(
+                        nonce.nonce.unwrap().as_ref(),
+                    )),
+                )
+            })
+            .collect::<IndexMap<ContractAddress, Nonce>>();
+        let replaced_classes = state_diff
+            .replaced_classes
+            .into_iter()
+            .map(|class| {
+                (
+                    ContractAddress::try_from(StarkHash::from_hex_unchecked(
+                        class.contract_address.unwrap().0.as_ref(),
+                    ))
+                    .unwrap(),
+                    ClassHash(StarkHash::from_hex_unchecked(
+                        class.class_hash.unwrap().as_ref(),
+                    )),
+                )
+            })
+            .collect::<IndexMap<ContractAddress, ClassHash>>();
+        let storage_diffs = state_diff
+            .storage_diffs
+            .into_iter()
+            .map(|diff| {
+                (
+                    ContractAddress::try_from(StarkHash::from_hex_unchecked(
+                        diff.address.as_ref(),
+                    )).unwrap(),
+                    diff.storage_entries
+                        .into_iter()
+                        .map(|entry| {
+                            (
+                                StorageKey(PatriciaKey::from_hex_unchecked(
+                                    entry.key.unwrap().as_ref(),
+                                )),
+                                StarkHash::from_hex_unchecked(entry.value.unwrap().as_ref()),
+                            )
+                        })
+                        .collect::<IndexMap<StorageKey, StarkHash>>(),
+                )
+            })
+            .collect::<
+                IndexMap<ContractAddress, IndexMap<StorageKey, StarkHash>>
+            >();
+        let all_deployed_contracts = deployed_contracts
+            .into_iter()
+            .chain(replaced_classes.into_iter())
+            .collect::<IndexMap<ContractAddress, ClassHash>>();
+        let state_diff = StateDiff {
+            declared_classes,
+            deployed_contracts: all_deployed_contracts,
+            deprecated_declared_classes,
+            nonces,
+            storage_diffs,
+        };
+        Ok(ThinStateDiff::from(state_diff))
+    }
+}
+
+// Implementation for converting TransactionAndReceipt to starknet_api::block_hash::TransactionHashingData
+impl TryFrom<TransactionAndReceipt>
+    for starknet_api::block_hash::block_hash_calculator::TransactionHashingData
+{
+    type Error = crate::exe::err::Error;
+    fn try_from(
+        transaction_and_receipt: TransactionAndReceipt,
+    ) -> Result<Self, Self::Error> {
+        use starknet_api::{
+            block_hash::block_hash_calculator::TransactionOutputForHash,
+            hash::StarkHash,
+            transaction::{
+                fields::{TransactionSignature, Fee},
+                RevertedTransactionExecutionStatus, TransactionExecutionStatus,
+                TransactionHash, Event, EventContent, EventData, EventKey, MessageToL1, L2ToL1Payload
+            },
+            core::{ContractAddress, EthAddress},
+            execution_resources::{GasAmount, GasVector},
+        };
+
+        let signature: Vec<Felt> = match transaction_and_receipt.transaction {
+            Txn::InvokeTxn(invoke_txn) => match invoke_txn {
+                InvokeTxn::InvokeTxnV0(invoke_txn_v0) => {
+                    invoke_txn_v0.signature
+                }
+                InvokeTxn::InvokeTxnV1(invoke_txn_v1) => {
+                    invoke_txn_v1.signature
+                }
+                InvokeTxn::InvokeTxnV3(invoke_txn_v3) => {
+                    invoke_txn_v3.signature
+                }
+            },
+            Txn::L1HandlerTxn(_l1_handler_txn) => vec![],
+            Txn::DeclareTxn(declare_txn) => match declare_txn {
+                DeclareTxn::DeclareTxnV0(declare_txn_v0) => {
+                    declare_txn_v0.signature
+                }
+                DeclareTxn::DeclareTxnV1(declare_txn_v1) => {
+                    declare_txn_v1.signature
+                }
+                DeclareTxn::DeclareTxnV2(declare_txn_v2) => {
+                    declare_txn_v2.signature
+                }
+                DeclareTxn::DeclareTxnV3(declare_txn_v3) => {
+                    declare_txn_v3.signature
+                }
+            },
+            Txn::DeployTxn(_deploy_txn) => vec![],
+            Txn::DeployAccountTxn(deploy_account_txn) => {
+                match deploy_account_txn {
+                    DeployAccountTxn::DeployAccountTxnV1(
+                        deploy_account_txn_v1,
+                    ) => deploy_account_txn_v1.signature,
+                    DeployAccountTxn::DeployAccountTxnV3(
+                        deploy_account_txn_v3,
+                    ) => deploy_account_txn_v3.signature,
+                }
+            }
+        };
+
+        let common_receipt_properties: CommonReceiptProperties =
+            match transaction_and_receipt.receipt {
+                TxnReceipt::InvokeTxnReceipt(invoke_txn_receipt) => {
+                    invoke_txn_receipt.common_receipt_properties
+                }
+                TxnReceipt::L1HandlerTxnReceipt(l1_handler_txn_receipt) => {
+                    l1_handler_txn_receipt.common_receipt_properties
+                }
+                TxnReceipt::DeclareTxnReceipt(declare_txn_receipt) => {
+                    declare_txn_receipt.common_receipt_properties
+                }
+                TxnReceipt::DeployTxnReceipt(deploy_txn_receipt) => {
+                    deploy_txn_receipt.common_receipt_properties
+                }
+                TxnReceipt::DeployAccountTxnReceipt(
+                    deploy_account_txn_receipt,
+                ) => deploy_account_txn_receipt.common_receipt_properties
+            };
+
+        let execution_status: TransactionExecutionStatus = match common_receipt_properties.result_common_receipt_properties {
+            ResultCommonReceiptProperties::SuccessfulCommonReceiptProperties(_) => TransactionExecutionStatus::Succeeded,
+            ResultCommonReceiptProperties::RevertedCommonReceiptProperties(reverted_common_receipt_properties) =>
+                TransactionExecutionStatus::Reverted(RevertedTransactionExecutionStatus{revert_reason: reverted_common_receipt_properties.revert_reason}),
+        };
+
+        let transaction_output = TransactionOutputForHash {
+            actual_fee: Fee(u128::from_str_radix(common_receipt_properties.actual_fee.amount.as_ref().trim_start_matches("0x"),16)?),
+            events: common_receipt_properties.events.into_iter().map(|event| {
+                Event {
+                    from_address: ContractAddress::try_from(StarkHash::from_hex_unchecked(event.from_address.0.as_ref())).unwrap(),
+                    content: EventContent {
+                        data: EventData(event.event_content.data.into_iter().map(|data_item| {
+                            StarkHash::from_hex_unchecked(data_item.as_ref())
+                        }).collect::<Vec<StarkHash>>()),
+                        keys: event.event_content.keys.into_iter().map(|key_item| {
+                            EventKey(StarkHash::from_hex_unchecked(key_item.as_ref()))
+                        }).collect::<Vec<EventKey>>(),
+                    },
+                }
+            }).collect::<Vec<Event>>(),
+            execution_status,
+            gas_consumed: GasVector {
+                l1_gas: GasAmount(common_receipt_properties.execution_resources.l1_gas as u64),
+                l1_data_gas: GasAmount(common_receipt_properties.execution_resources.l1_data_gas as u64),
+                l2_gas: GasAmount(common_receipt_properties.execution_resources.l2_gas as u64),
+            },
+            messages_sent: common_receipt_properties.messages_sent.into_iter().map(|msg| {
+                MessageToL1 {
+                    from_address: ContractAddress::try_from(StarkHash::from_hex_unchecked(msg.from_address.as_ref())).unwrap(),
+                    to_address: EthAddress::try_from(StarkHash::from_hex_unchecked(msg.to_address.as_ref())).unwrap(),
+                    payload: L2ToL1Payload(msg.payload.into_iter().map(|payload_item| {
+                        StarkHash::from_hex_unchecked(payload_item.as_ref())
+                    }).collect::<Vec<StarkHash>>()),
+                }
+            }).collect::<Vec<MessageToL1>>(),
+        };
+
+        Ok(Self {
+            transaction_signature: TransactionSignature(
+                signature
+                    .into_iter()
+                    .map(|signature_item| {
+                        StarkHash::from_hex_unchecked(signature_item.as_ref())
+                    })
+                    .collect::<Vec<StarkHash>>(),
+            ),
+            transaction_output,
+            transaction_hash: TransactionHash(StarkHash::from_hex_unchecked(
+                common_receipt_properties.transaction_hash.0.as_ref(),
+            )),
+        })
+    }
+}

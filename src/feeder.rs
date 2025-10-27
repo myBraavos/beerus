@@ -1,6 +1,6 @@
 use eyre::{Context, OptionExt, Result};
 
-use crate::{client::State};
+use crate::{client::{state::GatewayState, State}, r#gen::{BlockId, Felt}};
 
 /// Gateway client for interacting with Starknet feeder gateway
 pub struct GatewayClient {
@@ -36,8 +36,32 @@ impl GatewayClient {
     }
 
     /// Get current state from the latest block
-    pub async fn get_state(&self) -> Result<State> {
-        let url = self.build_url("/feeder_gateway/get_block", &[("blockNumber", "latest")]);
+    pub async fn get_state(&self, block_number: BlockId) -> Result<GatewayState> {
+        // Own the strings so we don't create short-lived temporaries
+        let mut params_owned: Vec<(String, String)> = vec![
+            ("headerOnly".to_string(), "true".to_string()),
+        ];
+
+        if let BlockId::BlockNumber { block_number } = block_number {
+            params_owned.push((
+                "blockNumber".to_string(),
+                block_number.0.to_string(),
+            ));
+        } else {
+            params_owned.push((
+                "blockNumber".to_string(),
+                "latest".to_string(),
+            ));
+        }
+
+        // Build a temporary vector of &str pairs that borrow from params_owned.
+        // params_owned must stay alive while we use params_refs (it does here).
+        let params_refs: Vec<(&str, &str)> = params_owned
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+
+        let url = self.build_url("/feeder_gateway/get_block", &params_refs);
         let json = self.make_json_request(&url).await?;
 
         self.validate_and_extract_state(&json)
@@ -117,11 +141,7 @@ impl GatewayClient {
     }
 
     /// Validate and extract state from JSON response
-    fn validate_and_extract_state(&self, json: &serde_json::Value) -> Result<State> {
-        if json["status"].as_str() != Some("ACCEPTED_ON_L2") {
-            eyre::bail!("Gateway: block status is not ACCEPTED_ON_L2");
-        }
-
+    fn validate_and_extract_state(&self, json: &serde_json::Value) -> Result<GatewayState> {
         let block_number: u64 = json["block_number"]
             .as_u64()
             .ok_or_eyre("Gateway: missing or invalid block_number")?;
@@ -131,17 +151,10 @@ impl GatewayClient {
             .map(ToOwned::to_owned)
             .ok_or_eyre("Gateway: missing or invalid block_hash")?;
 
-        let root = json["state_root"]
-            .as_str()
-            .map(ToOwned::to_owned)
-            .ok_or_eyre("Gateway: missing or invalid state_root")?;
-
-        Ok(State {
+        Ok(GatewayState {
             block_number,
             block_hash: Felt::try_new(&block_hash)
                 .context("Invalid block hash format")?,
-            root: Felt::try_new(&root)
-                .context("Invalid state root format")?,
         })
     }
 }
@@ -179,9 +192,8 @@ mod tests {
             .await;
 
         let gateway = GatewayClient::new(mock.uri().as_str())?;
-        let state = gateway.get_state().await?;
+        let state = gateway.get_state(BlockId::BlockTag(crate::gen::BlockTag::Latest)).await?;
 
-        assert_eq!(state.root.as_ref(), STATE_ROOT);
         assert_eq!(state.block_number, BLOCK_NUMBER);
         assert_eq!(state.block_hash.as_ref(), BLOCK_HASH);
         Ok(())
