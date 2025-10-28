@@ -1,6 +1,6 @@
 use eyre::{Context, OptionExt, Result};
 
-use crate::{client::{state::GatewayState, State}, r#gen::{BlockId, Felt}};
+use crate::{client::state::GatewayState, r#gen::{BlockId, Felt}};
 
 /// Gateway client for interacting with Starknet feeder gateway
 pub struct GatewayClient {

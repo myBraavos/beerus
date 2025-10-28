@@ -40,6 +40,7 @@ lru = "0.16.2"
 alloy-primitives = { version = "1.4.1", default-features = false }
 indexmap = "=2.12.0"
 semver = "1.0.27"
+sqlx = { version = "0.8.6", features = ["runtime-tokio", "postgres"]}
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { version = "1", features = ["sync", "macros", "io-util", "rt-multi-thread", "time"] }

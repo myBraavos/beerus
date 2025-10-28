@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use eyre::Result;
 use starknet_api::block_hash::block_hash_calculator::{
     calculate_block_commitments, calculate_block_hash,
@@ -9,6 +10,7 @@ use crate::gen::client::Client as StarknetClient;
 use crate::gen::{gen, BlockId, BlockTag, Felt, FunctionCall, Rpc};
 use crate::gen::BlockHash;
 use crate::feeder::GatewayClient;
+use crate::storage::storage_trait::StorageProviderTrait;
 
 pub mod http;
 pub mod state;
@@ -32,6 +34,7 @@ pub struct Client<
     starknet: StarknetClient<T>,
     http: T,
     gateway: GatewayClient,
+    storage: Arc<dyn StorageProviderTrait>,
 }
 
 impl<
@@ -42,7 +45,7 @@ impl<
     > Client<T>
 {
     /// Create a new client with the given configuration and HTTP client
-    pub async fn new(config: &Config, http: T) -> Result<Self> {
+    pub async fn new(config: &Config, http: T, storage: Arc<dyn StorageProviderTrait>) -> Result<Self> {
         let starknet = StarknetClient::new(&config.starknet_rpc, http.clone());
         let rpc_spec_version = starknet.specVersion().await?;
         let version1 = semver::Version::parse(&rpc_spec_version)?;
@@ -51,7 +54,7 @@ impl<
             eyre::bail!("RPC spec version mismatch: expected {MIN_RPC_SPEC_VERSION} but got {rpc_spec_version}");
         }
         let gateway = GatewayClient::new(&config.gateway_url)?;
-        Ok(Self { starknet, http, gateway })
+        Ok(Self { starknet, http, gateway, storage })
     }
 
     /// Get the underlying Starknet client
@@ -62,6 +65,11 @@ impl<
     /// Get the HTTP client
     pub fn http(&self) -> &T {
         &self.http
+    }
+
+    /// Get the storage provider
+    pub fn storage(&self) -> &Arc<dyn StorageProviderTrait> {
+        &self.storage
     }
 
     /// Execute a function call on the Starknet state

@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 use crate::gen::Felt;
 
 /// Minimal state from feeder gateway
@@ -8,7 +10,7 @@ pub struct GatewayState {
 }
 
 /// Represents the current state of the Starknet blockchain
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct State {
     pub block_number: u64,
     pub block_hash: Felt,

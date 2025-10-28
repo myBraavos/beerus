@@ -1,6 +1,9 @@
+use std::sync::Arc;
+
 use beerus::client::{Client, Http};
 use beerus::config::Config;
 use beerus::gen::{BlockId, BlockTag};
+use beerus::storage::sql_storage_provider::SqlStorageProvider;
 use eyre::{Result};
 
 #[tokio::main]
@@ -14,18 +17,25 @@ async fn main() -> Result<()> {
         gateway_url: format!(
             "https://feeder.alpha-mainnet.starknet.io"
         ),
-        data_dir: "tmp".to_owned(),
+        database_url:format!(
+            "postgresql://myuser:mypassword@localhost:5432/beerus"
+        ),
     };
 
     let http = Http::new();
-    let beerus = Client::new(&config, http).await?;
+    let storage = Arc::new(SqlStorageProvider::new(&config.database_url).await?);
+    let beerus = Client::new(&config, http, storage).await?;
 
     let gateway_state = beerus.get_gateway_state(BlockId::BlockTag(BlockTag::Latest)).await?;
     let state = beerus.get_verified_state(
         &beerus::r#gen::BlockHash(gateway_state.block_hash),
         None,
     ).await?;
-    tracing::info!("{state:#?}");
+    tracing::info!("synced: {state:#?}");
+
+    beerus.storage().write_state(&state).await?;
+    let state = beerus.storage().read_latest_state().await?;
+    tracing::info!("read: {state:#?}");
 
     Ok(())
 }

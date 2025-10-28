@@ -1,6 +1,5 @@
 use std::fs;
 use std::net::SocketAddr;
-use std::path::Path;
 
 use eyre::{Context, Result};
 use serde::Deserialize;
@@ -8,8 +7,6 @@ use validator::Validate;
 
 /// Configuration constants
 mod constants {
-    #[cfg(not(target_arch = "wasm32"))]
-    pub const DEFAULT_DATA_DIR: &str = "tmp";
     pub const DEFAULT_POLL_SECS: u64 = 30;
     pub const DEFAULT_RPC_PORT: u16 = 3030;
     pub const MIN_POLL_SECS: u64 = 1;
@@ -20,7 +17,7 @@ mod constants {
 mod env_vars {
     pub const STARKNET_RPC: &str = "STARKNET_RPC";
     pub const GATEWAY_URL: &str = "GATEWAY_URL";
-    pub const DATA_DIR: &str = "DATA_DIR";
+    pub const DATABASE_URL: &str = "DATABASE_URL";
     pub const POLL_SECS: &str = "POLL_SECS";
     pub const RPC_ADDR: &str = "RPC_ADDR";
 }
@@ -45,8 +42,8 @@ pub struct Config {
     #[validate(url)]
     pub gateway_url: String,
     #[cfg(not(target_arch = "wasm32"))]
-    #[serde(default = "default_data_dir")]
-    pub data_dir: String,
+    #[validate(url)]
+    pub database_url: String,
 }
 
 impl ServerConfig {
@@ -60,7 +57,7 @@ impl ServerConfig {
                 starknet_rpc: Self::parse_starknet_rpc_from_env()?,
                 gateway_url: Self::parse_gateway_url_from_env()?,
                 #[cfg(not(target_arch = "wasm32"))]
-                data_dir: Self::parse_data_dir_from_env(),
+                database_url: Self::parse_database_url_from_env()?,
             },
             poll_secs,
             rpc_addr,
@@ -117,16 +114,10 @@ impl ServerConfig {
 
     /// Parse data directory from environment variable
     #[cfg(not(target_arch = "wasm32"))]
-    fn parse_data_dir_from_env() -> String {
-        std::env::var(env_vars::DATA_DIR)
-            .unwrap_or_else(|_| default_data_dir())
+    fn parse_database_url_from_env() -> Result<String> {
+        std::env::var(env_vars::DATABASE_URL)
+            .context("DATABASE_URL environment variable is required")
     }
-}
-
-/// Default data directory
-#[cfg(not(target_arch = "wasm32"))]
-fn default_data_dir() -> String {
-    constants::DEFAULT_DATA_DIR.to_owned()
 }
 
 /// Default poll interval in seconds
@@ -137,28 +128,6 @@ fn default_poll_secs() -> u64 {
 /// Default RPC server address
 fn default_rpc_addr() -> SocketAddr {
     SocketAddr::from(([0, 0, 0, 0], constants::DEFAULT_RPC_PORT))
-}
-
-/// Validate that a data directory exists and is writable
-pub fn validate_data_dir<P: AsRef<Path>>(path: &P) -> Result<()> {
-    let path = path.as_ref();
-
-    if !path.exists() {
-        eyre::bail!("Data directory does not exist: {}", path.display());
-    }
-
-    let metadata = path.metadata()
-        .context("Failed to read data directory metadata")?;
-
-    if !metadata.is_dir() {
-        eyre::bail!("Path is not a directory: {}", path.display());
-    }
-
-    if metadata.permissions().readonly() {
-        eyre::bail!("Data directory is read-only: {}", path.display());
-    }
-
-    Ok(())
 }
 
 #[cfg(test)]
@@ -172,7 +141,7 @@ mod tests {
                 starknet_rpc: "invalid-url".to_string(),
                 gateway_url: "".to_string(),
                 #[cfg(not(target_arch = "wasm32"))]
-                data_dir: "test".to_string(),
+                database_url: "".to_string(),
             },
             poll_secs: 300,
             rpc_addr: SocketAddr::from(([0, 0, 0, 0], 3030)),
@@ -190,7 +159,7 @@ mod tests {
                 starknet_rpc: "https://example.com".to_string(),
                 gateway_url: "".to_string(),
                 #[cfg(not(target_arch = "wasm32"))]
-                data_dir: "test".to_string(),
+                database_url: "".to_string(),
             },
             poll_secs: 9999, // Too high
             rpc_addr: SocketAddr::from(([127, 0, 0, 1], 3030)),
@@ -208,7 +177,7 @@ mod tests {
                 starknet_rpc: "https://example.com".to_string(),
                 gateway_url: "".to_string(),
                 #[cfg(not(target_arch = "wasm32"))]
-                data_dir: "test".to_string(),
+                database_url: "".to_string(),
             },
             poll_secs: 300,
             rpc_addr: SocketAddr::from(([127, 0, 0, 1], 3030)),
