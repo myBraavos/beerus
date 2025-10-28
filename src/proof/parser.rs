@@ -21,7 +21,7 @@ impl ProofParser {
             create_proof_error("No storage proof found"),
         )?;
 
-        match parse_proof(storage_key.as_ref(), storage_value, &storage_proofs)? {
+        match parse_proof(storage_key.as_ref(), storage_value, storage_proofs)? {
             Some(computed_storage_root) if computed_storage_root.as_ref() == expected_storage_root.as_ref() => {
                 Ok(())
             }

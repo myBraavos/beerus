@@ -1,15 +1,16 @@
-use std::sync::Arc;
 use eyre::Result;
 use starknet_api::block_hash::block_hash_calculator::{
     calculate_block_commitments, calculate_block_hash,
 };
+use std::sync::Arc;
 
 use crate::client::state::GatewayState;
 use crate::config::Config;
-use crate::gen::client::Client as StarknetClient;
-use crate::gen::{gen, BlockId, BlockTag, Felt, FunctionCall, Rpc};
-use crate::gen::BlockHash;
 use crate::feeder::GatewayClient;
+use crate::gen::client::Client as StarknetClient;
+use crate::gen::BlockHash;
+use crate::gen::{gen, BlockId, BlockTag, Felt, FunctionCall, Rpc};
+use crate::r#gen::BlockNumber;
 use crate::storage::storage_trait::StorageProviderTrait;
 
 pub mod http;
@@ -45,7 +46,11 @@ impl<
     > Client<T>
 {
     /// Create a new client with the given configuration and HTTP client
-    pub async fn new(config: &Config, http: T, storage: Arc<dyn StorageProviderTrait>) -> Result<Self> {
+    pub async fn new(
+        config: &Config,
+        http: T,
+        storage: Arc<dyn StorageProviderTrait>,
+    ) -> Result<Self> {
         let starknet = StarknetClient::new(&config.starknet_rpc, http.clone());
         let rpc_spec_version = starknet.specVersion().await?;
         let version1 = semver::Version::parse(&rpc_spec_version)?;
@@ -93,23 +98,41 @@ impl<
     }
 
     // Get minimal state from feeder gateway
-    pub async fn get_gateway_state(&self, block_id: BlockId) -> Result<GatewayState> {
+    pub async fn get_gateway_state_by_id(
+        &self,
+        block_id: BlockId,
+    ) -> Result<GatewayState> {
         if let BlockId::BlockNumber { block_number } = block_id.clone() {
             // TODO: implement block hash verification for older blocks
             if block_number.0 < FIRST_SUPPORTED_BLOCK_NUMBER {
                 eyre::bail!("Block number is too low: {block_number:?}, minimum supported: {FIRST_SUPPORTED_BLOCK_NUMBER}");
             }
         }
-        Ok(self.gateway.get_state(block_id).await?)
+        self.gateway.get_state(block_id).await
+    }
+
+    pub async fn get_gateway_state(
+        &self,
+        block_number: i64,
+    ) -> Result<GatewayState> {
+        self.get_gateway_state_by_id(BlockId::BlockNumber {
+            block_number: BlockNumber::try_new(block_number).unwrap(),
+        })
+        .await
+    }
+
+    pub async fn get_latest_gateway_state(&self) -> Result<GatewayState> {
+        self.get_gateway_state_by_id(BlockId::BlockTag(BlockTag::Latest)).await
     }
 
     /// Get and verify block state from rpc
     pub async fn get_verified_state(
         &self,
-        block_hash: &BlockHash,
-        prev_block_hash: Option<BlockHash>,
+        block_hash: &Felt,
+        prev_block_hash: Option<Felt>,
     ) -> Result<State> {
-        let block_id = BlockId::BlockHash { block_hash: block_hash.clone() };
+        let block_id =
+            BlockId::BlockHash { block_hash: BlockHash(block_hash.clone()) };
         let block = self.starknet.getBlockWithReceipts(block_id).await?;
         let gen::GetBlockWithReceiptsResult::BlockWithReceipts(block) = block
         else {
@@ -117,15 +140,16 @@ impl<
         };
 
         let parent_block_hash = block.block_header.parent_hash.0.clone();
-        if prev_block_hash.is_some()
-            && parent_block_hash != prev_block_hash.as_ref().unwrap().0
-        {
-            let expected_prev_block_hash = prev_block_hash.unwrap().0;
-            eyre::bail!("Prev block hash mismatch: expected {expected_prev_block_hash:?} but got {parent_block_hash:?}");
+        if let Some(prev_block_hash) = prev_block_hash {
+            if parent_block_hash != prev_block_hash {
+                eyre::bail!("Prev block hash mismatch: expected {prev_block_hash:?} but got {parent_block_hash:?}");
+            }
         }
 
-        let starknet_version = semver::Version::parse(&block.block_header.starknet_version)?;
-        let max_starknet_version = semver::Version::parse(MAX_STARKNET_VERSION)?;
+        let starknet_version =
+            semver::Version::parse(&block.block_header.starknet_version)?;
+        let max_starknet_version =
+            semver::Version::parse(MAX_STARKNET_VERSION)?;
         if starknet_version > max_starknet_version {
             eyre::bail!("Unsupported starknet version: {starknet_version}, max supported: {MAX_STARKNET_VERSION}");
         }
@@ -159,18 +183,19 @@ impl<
 
         if calculated_block_hash.0
             != starknet_api::hash::StarkHash::from_hex_unchecked(
-                block_hash.0.as_ref(),
+                block_hash.as_ref(),
             )
         {
             eyre::bail!("Block hash mismatch: expected {block_hash:?} but got {calculated_block_hash:?}");
         }
 
-        Ok(State::new(
-            *block.block_header.block_number.as_ref() as u64,
+        let state = State::new(
+            *block.block_header.block_number.as_ref(),
             block.block_header.block_hash.0,
             block.block_header.new_root,
-            parent_block_hash,
-        ))
+        );
+        self.storage().write_state(&state).await?;
+        Ok(state)
     }
 
     /// DEPRECATED: Use get_verified_state instead
@@ -183,10 +208,9 @@ impl<
             eyre::bail!("Pending block received, which is not supported");
         };
         Ok(State::new(
-            *block.block_header.block_number.as_ref() as u64,
+            *block.block_header.block_number.as_ref(),
             block.block_header.block_hash.0,
             block.block_header.new_root,
-            block.block_header.parent_hash.0,
         ))
     }
 }

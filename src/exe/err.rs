@@ -18,10 +18,10 @@ pub enum Error {
     #[error("blockifier state error: {0:?}")]
     State(#[from] blockifier::state::errors::StateError),
     #[error("blockifier entry point error: {0:?}")]
-    EntryPoint(#[from] blockifier::execution::errors::EntryPointExecutionError),
+    EntryPoint(Box<blockifier::execution::errors::EntryPointExecutionError>),
     #[error("blockifier transaction error: {0:?}")]
     Transaction(
-        #[from] blockifier::transaction::errors::TransactionExecutionError,
+        #[from] Box<blockifier::transaction::errors::TransactionExecutionError>,
     ),
     #[error("sierra compilation error: {0:?}")]
     SierraCompilation(#[from] StarknetSierraCompilationError),
@@ -38,6 +38,12 @@ impl From<Error> for blockifier::state::errors::StateError {
         blockifier::state::errors::StateError::StateReadError(format!(
             "{error:?}"
         ))
+    }
+}
+
+impl From<blockifier::execution::errors::EntryPointExecutionError> for Error {
+    fn from(error: blockifier::execution::errors::EntryPointExecutionError) -> Self {
+        Error::EntryPoint(Box::new(error))
     }
 }
 

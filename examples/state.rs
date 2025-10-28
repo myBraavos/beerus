@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use beerus::client::{Client, Http};
 use beerus::config::Config;
-use beerus::gen::{BlockId, BlockTag};
 use beerus::storage::sql_storage_provider::SqlStorageProvider;
 use eyre::{Result};
 
@@ -26,14 +25,12 @@ async fn main() -> Result<()> {
     let storage = Arc::new(SqlStorageProvider::new(&config.database_url).await?);
     let beerus = Client::new(&config, http, storage).await?;
 
-    let gateway_state = beerus.get_gateway_state(BlockId::BlockTag(BlockTag::Latest)).await?;
+    let gateway_state = beerus.get_latest_gateway_state().await?;
     let state = beerus.get_verified_state(
-        &beerus::r#gen::BlockHash(gateway_state.block_hash),
+        &gateway_state.block_hash,
         None,
     ).await?;
     tracing::info!("synced: {state:#?}");
-
-    beerus.storage().write_state(&state).await?;
     let state = beerus.storage().read_latest_state().await?;
     tracing::info!("read: {state:#?}");
 

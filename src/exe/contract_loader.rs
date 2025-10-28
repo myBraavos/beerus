@@ -41,7 +41,7 @@ impl ContractLoader {
             //     //     deprecated_contract_class.try_into().map_err(|_| Error::Custom("Failed to convert DeprecatedContractClass"))?;
             //     // ContractClass::V0(deprecated_contract_class)
             // }
-            _ => Err(Error::Custom("Failed to convert DeprecatedContractClass").into()),
+            _ => Err(Error::Custom("Failed to convert DeprecatedContractClass")),
         }
     }
 }

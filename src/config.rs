@@ -81,7 +81,7 @@ impl ServerConfig {
             Ok(value) => {
                 let poll_secs = value.parse()
                     .context("Invalid POLL_SECS value")?;
-                if poll_secs < constants::MIN_POLL_SECS || poll_secs > constants::MAX_POLL_SECS {
+                if !(constants::MIN_POLL_SECS..=constants::MAX_POLL_SECS).contains(&poll_secs) {
                     eyre::bail!("POLL_SECS must be between {} and {}",
                                constants::MIN_POLL_SECS, constants::MAX_POLL_SECS);
                 }

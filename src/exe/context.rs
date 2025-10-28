@@ -97,7 +97,7 @@ impl ExecutionContextBuilder {
             block_number: self.block_number.unwrap_or_default(),
             block_timestamp: self.block_timestamp.unwrap_or_default(),
             sequencer_address: self.sequencer_address.unwrap_or_default(),
-            gas_prices: self.gas_prices.unwrap_or_else(|| GasPrices {
+            gas_prices: self.gas_prices.unwrap_or(GasPrices {
                 eth_gas_prices: GasPriceVector {
                     l1_gas_price: NonzeroGasPrice::MIN,
                     l1_data_gas_price: NonzeroGasPrice::MIN,

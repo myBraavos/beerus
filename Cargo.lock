@@ -407,7 +407,7 @@ checksum = "55248b47b0caf0546f7988906588779981c43bb1bc9d0c44087278f80cdb44ba"
 
 [[package]]
 name = "beerus"
-version = "0.7.1"
+version = "0.9.0"
 dependencies = [
  "alloy-primitives",
  "async-trait",

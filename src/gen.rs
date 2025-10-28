@@ -8856,8 +8856,7 @@ impl TryFrom<Felt> for starknet_api::block::GasPrice {
     fn try_from(felt: Felt) -> Result<Self, Self::Error> {
         let trimmed = felt.as_ref().trim_start_matches("0x");
         Ok(starknet_api::block::GasPrice::from(u128::from_str_radix(
-            trimmed,
-            16,
+            trimmed, 16,
         )?))
     }
 }
@@ -8949,13 +8948,11 @@ impl TryFrom<BlockHeader> for starknet_api::block::BlockHeaderWithoutHash {
                 StarkFelt::from_hex_unchecked(header.new_root.as_ref()),
             )),
             sequencer: SequencerContractAddress(
-                starknet_api::core::ContractAddress::from(
-                    starknet_api::core::ContractAddress::try_from(
-                        StarkFelt::from_hex_unchecked(
-                            header.sequencer_address.as_ref(),
-                        ),
-                    )?,
-                ),
+                starknet_api::core::ContractAddress::try_from(
+                    StarkFelt::from_hex_unchecked(
+                        header.sequencer_address.as_ref(),
+                    ),
+                )?,
             ),
             timestamp: BlockTimestamp(*header.timestamp.as_ref() as u64),
             l1_da_mode,
@@ -9077,7 +9074,7 @@ impl TryFrom<StateDiff> for starknet_api::state::ThinStateDiff {
             >();
         let all_deployed_contracts = deployed_contracts
             .into_iter()
-            .chain(replaced_classes.into_iter())
+            .chain(replaced_classes)
             .collect::<IndexMap<ContractAddress, ClassHash>>();
         let state_diff = StateDiff {
             declared_classes,
@@ -9100,14 +9097,15 @@ impl TryFrom<TransactionAndReceipt>
     ) -> Result<Self, Self::Error> {
         use starknet_api::{
             block_hash::block_hash_calculator::TransactionOutputForHash,
-            hash::StarkHash,
-            transaction::{
-                fields::{TransactionSignature, Fee},
-                RevertedTransactionExecutionStatus, TransactionExecutionStatus,
-                TransactionHash, Event, EventContent, EventData, EventKey, MessageToL1, L2ToL1Payload
-            },
             core::{ContractAddress, EthAddress},
             execution_resources::{GasAmount, GasVector},
+            hash::StarkHash,
+            transaction::{
+                fields::{Fee, TransactionSignature},
+                Event, EventContent, EventData, EventKey, L2ToL1Payload,
+                MessageToL1, RevertedTransactionExecutionStatus,
+                TransactionExecutionStatus, TransactionHash,
+            },
         };
 
         let signature: Vec<Felt> = match transaction_and_receipt.transaction {
@@ -9166,7 +9164,7 @@ impl TryFrom<TransactionAndReceipt>
                 }
                 TxnReceipt::DeployAccountTxnReceipt(
                     deploy_account_txn_receipt,
-                ) => deploy_account_txn_receipt.common_receipt_properties
+                ) => deploy_account_txn_receipt.common_receipt_properties,
             };
 
         let execution_status: TransactionExecutionStatus = match common_receipt_properties.result_common_receipt_properties {
@@ -9176,35 +9174,89 @@ impl TryFrom<TransactionAndReceipt>
         };
 
         let transaction_output = TransactionOutputForHash {
-            actual_fee: Fee(u128::from_str_radix(common_receipt_properties.actual_fee.amount.as_ref().trim_start_matches("0x"),16)?),
-            events: common_receipt_properties.events.into_iter().map(|event| {
-                Event {
-                    from_address: ContractAddress::try_from(StarkHash::from_hex_unchecked(event.from_address.0.as_ref())).unwrap(),
+            actual_fee: Fee(u128::from_str_radix(
+                common_receipt_properties
+                    .actual_fee
+                    .amount
+                    .as_ref()
+                    .trim_start_matches("0x"),
+                16,
+            )?),
+            events: common_receipt_properties
+                .events
+                .into_iter()
+                .map(|event| Event {
+                    from_address: ContractAddress::try_from(
+                        StarkHash::from_hex_unchecked(
+                            event.from_address.0.as_ref(),
+                        ),
+                    )
+                    .unwrap(),
                     content: EventContent {
-                        data: EventData(event.event_content.data.into_iter().map(|data_item| {
-                            StarkHash::from_hex_unchecked(data_item.as_ref())
-                        }).collect::<Vec<StarkHash>>()),
-                        keys: event.event_content.keys.into_iter().map(|key_item| {
-                            EventKey(StarkHash::from_hex_unchecked(key_item.as_ref()))
-                        }).collect::<Vec<EventKey>>(),
+                        data: EventData(
+                            event
+                                .event_content
+                                .data
+                                .into_iter()
+                                .map(|data_item| {
+                                    StarkHash::from_hex_unchecked(
+                                        data_item.as_ref(),
+                                    )
+                                })
+                                .collect::<Vec<StarkHash>>(),
+                        ),
+                        keys: event
+                            .event_content
+                            .keys
+                            .into_iter()
+                            .map(|key_item| {
+                                EventKey(StarkHash::from_hex_unchecked(
+                                    key_item.as_ref(),
+                                ))
+                            })
+                            .collect::<Vec<EventKey>>(),
                     },
-                }
-            }).collect::<Vec<Event>>(),
+                })
+                .collect::<Vec<Event>>(),
             execution_status,
             gas_consumed: GasVector {
-                l1_gas: GasAmount(common_receipt_properties.execution_resources.l1_gas as u64),
-                l1_data_gas: GasAmount(common_receipt_properties.execution_resources.l1_data_gas as u64),
-                l2_gas: GasAmount(common_receipt_properties.execution_resources.l2_gas as u64),
+                l1_gas: GasAmount(
+                    common_receipt_properties.execution_resources.l1_gas as u64,
+                ),
+                l1_data_gas: GasAmount(
+                    common_receipt_properties.execution_resources.l1_data_gas
+                        as u64,
+                ),
+                l2_gas: GasAmount(
+                    common_receipt_properties.execution_resources.l2_gas as u64,
+                ),
             },
-            messages_sent: common_receipt_properties.messages_sent.into_iter().map(|msg| {
-                MessageToL1 {
-                    from_address: ContractAddress::try_from(StarkHash::from_hex_unchecked(msg.from_address.as_ref())).unwrap(),
-                    to_address: EthAddress::try_from(StarkHash::from_hex_unchecked(msg.to_address.as_ref())).unwrap(),
-                    payload: L2ToL1Payload(msg.payload.into_iter().map(|payload_item| {
-                        StarkHash::from_hex_unchecked(payload_item.as_ref())
-                    }).collect::<Vec<StarkHash>>()),
-                }
-            }).collect::<Vec<MessageToL1>>(),
+            messages_sent: common_receipt_properties
+                .messages_sent
+                .into_iter()
+                .map(|msg| MessageToL1 {
+                    from_address: ContractAddress::try_from(
+                        StarkHash::from_hex_unchecked(
+                            msg.from_address.as_ref(),
+                        ),
+                    )
+                    .unwrap(),
+                    to_address: EthAddress::try_from(
+                        StarkHash::from_hex_unchecked(msg.to_address.as_ref()),
+                    )
+                    .unwrap(),
+                    payload: L2ToL1Payload(
+                        msg.payload
+                            .into_iter()
+                            .map(|payload_item| {
+                                StarkHash::from_hex_unchecked(
+                                    payload_item.as_ref(),
+                                )
+                            })
+                            .collect::<Vec<StarkHash>>(),
+                    ),
+                })
+                .collect::<Vec<MessageToL1>>(),
         };
 
         Ok(Self {

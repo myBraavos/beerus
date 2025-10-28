@@ -4,17 +4,20 @@ use blockifier::{
     execution::{
         call_info::CallInfo,
         common_hints::ExecutionMode,
+        contract_class::RunnableCompiledClass,
         entry_point::{
             CallEntryPoint, CallType, EntryPointExecutionContext,
             SierraGasRevertTracker,
         },
-        contract_class::RunnableCompiledClass,
     },
     state::state_api::{State as BlockifierState, StateReader, StateResult},
 };
 use starknet_api::{
     contract_class::EntryPointType,
-    core::{ContractAddress, EntryPointSelector, ClassHash, CompiledClassHash, Nonce},
+    core::{
+        ClassHash, CompiledClassHash, ContractAddress, EntryPointSelector,
+        Nonce,
+    },
     execution_resources::GasAmount,
     state::StorageKey as StarknetStorageKey,
     transaction::fields::Calldata,
@@ -23,7 +26,7 @@ use starknet_types_core::felt::Felt as StarkFelt;
 
 use crate::{
     client::State,
-    exe::{cache, err::Error, contract_loader::ContractLoader},
+    exe::{cache, contract_loader::ContractLoader, err::Error},
     gen::{self, blocking::Rpc},
 };
 
@@ -46,14 +49,19 @@ impl<T: gen::client::blocking::HttpClient + Clone> CallExecutor<T> {
         &self,
         function_call: gen::FunctionCall,
     ) -> Result<CallInfo, Error> {
-        let gen::FunctionCall { calldata, contract_address, entry_point_selector } =
-            function_call;
+        let gen::FunctionCall {
+            calldata,
+            contract_address,
+            entry_point_selector,
+        } = function_call;
 
         let calldata: Result<Vec<StarkFelt>, _> =
-            calldata.into_iter().map(|felt| StarkFelt::try_from(felt)).collect();
+            calldata.into_iter().map(StarkFelt::try_from).collect();
 
-        let contract_address: StarkFelt = StarkFelt::try_from(contract_address.0)?;
-        let entry_point_selector: StarkFelt = StarkFelt::try_from(entry_point_selector)?;
+        let contract_address: StarkFelt =
+            StarkFelt::try_from(contract_address.0)?;
+        let entry_point_selector: StarkFelt =
+            StarkFelt::try_from(entry_point_selector)?;
 
         let tx_context = Arc::new(create_query_context()?);
         let limit_steps_by_resources = false;
@@ -78,7 +86,7 @@ impl<T: gen::client::blocking::HttpClient + Clone> CallExecutor<T> {
 
         let state_proxy: StateProxy<T> = StateProxy {
             client: self.client.clone(),
-            state: self.state.clone()
+            state: self.state.clone(),
         };
 
         tracing::debug!("State information:");
@@ -106,7 +114,9 @@ struct StateProxy<T: gen::client::blocking::HttpClient> {
     state: State,
 }
 
-impl<T: gen::client::blocking::HttpClient> cache::HasBlockHash for StateProxy<T> {
+impl<T: gen::client::blocking::HttpClient> cache::HasBlockHash
+    for StateProxy<T>
+{
     fn get_block_hash(&self) -> &gen::Felt {
         &self.state.block_hash
     }
@@ -149,11 +159,12 @@ impl<T: gen::client::blocking::HttpClient> StateReader for StateProxy<T> {
 
         let global_root = self.state.root.clone();
         let value = ret.clone();
-        crate::proof::verify_proof(&proof, global_root, address, key, value).map_err(|e| {
-            blockifier::state::errors::StateError::StateReadError(format!(
-                "Failed to verify merkle proof: {e:?}"
-            ))
-        })?;
+        crate::proof::verify_proof(&proof, global_root, address, key, value)
+            .map_err(|e| {
+                blockifier::state::errors::StateError::StateReadError(format!(
+                    "Failed to verify merkle proof: {e:?}"
+                ))
+            })?;
         tracing::info!("get_storage_at: proof verified");
 
         Ok(StarkFelt::try_from(ret)?)
@@ -227,7 +238,9 @@ impl<T: gen::client::blocking::HttpClient> StateReader for StateProxy<T> {
         class_hash: ClassHash,
     ) -> StateResult<CompiledClassHash> {
         tracing::info!(?class_hash, "get_compiled_class_hash");
-        Err(blockifier::state::errors::StateError::UndeclaredClassHash(class_hash))
+        Err(blockifier::state::errors::StateError::UndeclaredClassHash(
+            class_hash,
+        ))
     }
 }
 

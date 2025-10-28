@@ -142,8 +142,8 @@ impl GatewayClient {
 
     /// Validate and extract state from JSON response
     fn validate_and_extract_state(&self, json: &serde_json::Value) -> Result<GatewayState> {
-        let block_number: u64 = json["block_number"]
-            .as_u64()
+        let block_number: i64 = json["block_number"]
+            .as_i64()
             .ok_or_eyre("Gateway: missing or invalid block_number")?;
 
         let block_hash = json["block_hash"]
@@ -170,7 +170,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_state_success() -> Result<()> {
-        const BLOCK_NUMBER: u64 = 1056427;
+        const BLOCK_NUMBER: i64 = 1056427;
         const BLOCK_HASH: &str =
             "0x7c7b366f1b31a556ace49e1affe3b4ed3cfb5aa328b85307655ea70dadd0cc6";
         const STATE_ROOT: &str =

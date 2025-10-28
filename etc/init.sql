@@ -1,6 +1,5 @@
 CREATE TABLE IF NOT EXISTS state (
     block_number BIGINT PRIMARY KEY,
     block_hash VARCHAR(66) NOT NULL UNIQUE,
-    root VARCHAR(66) NOT NULL,
-    prev_block_hash VARCHAR(66) NOT NULL UNIQUE
+    root VARCHAR(66) NOT NULL
 );
