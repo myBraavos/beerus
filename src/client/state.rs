@@ -20,11 +20,7 @@ pub struct State {
 impl State {
     /// Create a new state with the given values
     pub fn new(block_number: i64, block_hash: Felt, root: Felt) -> Self {
-        Self {
-            block_number,
-            block_hash,
-            root,
-        }
+        Self { block_number, block_hash, root }
     }
 }
 

@@ -1,6 +1,6 @@
+use crate::client::State;
 use async_trait::async_trait;
 use thiserror::Error as ThisError;
-use crate::client::State;
 
 #[derive(Debug, ThisError)]
 pub enum StorageError {
@@ -26,9 +26,11 @@ impl Storages {
 }
 
 #[async_trait]
-pub trait StorageProviderTrait: Send + Sync
-{
-    async fn read_state(&self, block_number: u64) -> Result<State, StorageError>;
+pub trait StorageProviderTrait: Send + Sync {
+    async fn read_state(
+        &self,
+        block_number: u64,
+    ) -> Result<State, StorageError>;
     async fn read_latest_state(&self) -> Result<State, StorageError>;
     async fn write_state(&self, state: &State) -> Result<(), StorageError>;
 }

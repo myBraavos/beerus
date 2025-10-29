@@ -1,6 +1,9 @@
 use eyre::{Context, OptionExt, Result};
 
-use crate::{client::state::GatewayState, r#gen::{BlockId, Felt}};
+use crate::{
+    client::state::GatewayState,
+    r#gen::{BlockId, Felt},
+};
 
 /// Gateway client for interacting with Starknet feeder gateway
 pub struct GatewayClient {
@@ -14,44 +17,48 @@ impl GatewayClient {
         if url.ends_with('/') {
             eyre::bail!("Gateway URL must not end with '/'.");
         }
-        Ok(Self {
-            url: url.to_owned(),
-            client: reqwest::Client::new()
-        })
+        Ok(Self { url: url.to_owned(), client: reqwest::Client::new() })
     }
 
     /// Get public key for a block
     pub async fn get_pubkey(&self, block_hash: &str) -> Result<String> {
-        let url = self.build_url("/feeder_gateway/get_public_key", &[("blockHash", block_hash)]);
+        let url = self.build_url(
+            "/feeder_gateway/get_public_key",
+            &[("blockHash", block_hash)],
+        );
         let response = self.make_get_request(&url).await?;
         Ok(response)
     }
 
     /// Get signature for a block
-    pub async fn get_signature(&self, block_hash: &str) -> Result<(String, String)> {
-        let url = self.build_url("/feeder_gateway/get_signature", &[("blockHash", block_hash)]);
+    pub async fn get_signature(
+        &self,
+        block_hash: &str,
+    ) -> Result<(String, String)> {
+        let url = self.build_url(
+            "/feeder_gateway/get_signature",
+            &[("blockHash", block_hash)],
+        );
         let json = self.make_json_request(&url).await?;
 
         self.validate_and_extract_signature(&json, block_hash)
     }
 
     /// Get current state from the latest block
-    pub async fn get_state(&self, block_number: BlockId) -> Result<GatewayState> {
+    pub async fn get_state(
+        &self,
+        block_number: BlockId,
+    ) -> Result<GatewayState> {
         // Own the strings so we don't create short-lived temporaries
-        let mut params_owned: Vec<(String, String)> = vec![
-            ("headerOnly".to_string(), "true".to_string()),
-        ];
+        let mut params_owned: Vec<(String, String)> =
+            vec![("headerOnly".to_string(), "true".to_string())];
 
         if let BlockId::BlockNumber { block_number } = block_number {
-            params_owned.push((
-                "blockNumber".to_string(),
-                block_number.0.to_string(),
-            ));
+            params_owned
+                .push(("blockNumber".to_string(), block_number.0.to_string()));
         } else {
-            params_owned.push((
-                "blockNumber".to_string(),
-                "latest".to_string(),
-            ));
+            params_owned
+                .push(("blockNumber".to_string(), "latest".to_string()));
         }
 
         // Build a temporary vector of &str pairs that borrow from params_owned.
@@ -141,7 +148,10 @@ impl GatewayClient {
     }
 
     /// Validate and extract state from JSON response
-    fn validate_and_extract_state(&self, json: &serde_json::Value) -> Result<GatewayState> {
+    fn validate_and_extract_state(
+        &self,
+        json: &serde_json::Value,
+    ) -> Result<GatewayState> {
         let block_number: i64 = json["block_number"]
             .as_i64()
             .ok_or_eyre("Gateway: missing or invalid block_number")?;
@@ -192,7 +202,9 @@ mod tests {
             .await;
 
         let gateway = GatewayClient::new(mock.uri().as_str())?;
-        let state = gateway.get_state(BlockId::BlockTag(crate::gen::BlockTag::Latest)).await?;
+        let state = gateway
+            .get_state(BlockId::BlockTag(crate::gen::BlockTag::Latest))
+            .await?;
 
         assert_eq!(state.block_number, BLOCK_NUMBER);
         assert_eq!(state.block_hash.as_ref(), BLOCK_HASH);

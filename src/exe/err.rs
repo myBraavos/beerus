@@ -42,7 +42,9 @@ impl From<Error> for blockifier::state::errors::StateError {
 }
 
 impl From<blockifier::execution::errors::EntryPointExecutionError> for Error {
-    fn from(error: blockifier::execution::errors::EntryPointExecutionError) -> Self {
+    fn from(
+        error: blockifier::execution::errors::EntryPointExecutionError,
+    ) -> Self {
         Error::EntryPoint(Box::new(error))
     }
 }

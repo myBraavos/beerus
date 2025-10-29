@@ -28,7 +28,10 @@ pub struct ServerConfig {
     #[serde(flatten)]
     pub client: Config,
     #[serde(default = "default_poll_secs")]
-    #[validate(range(min = "constants::MIN_POLL_SECS", max = "constants::MAX_POLL_SECS"))]
+    #[validate(range(
+        min = "constants::MIN_POLL_SECS",
+        max = "constants::MAX_POLL_SECS"
+    ))]
     pub poll_secs: u64,
     #[serde(default = "default_rpc_addr")]
     pub rpc_addr: SocketAddr,
@@ -66,12 +69,11 @@ impl ServerConfig {
 
     /// Create configuration from TOML file
     pub fn from_file(path: &str) -> Result<Self> {
-        let content = fs::read_to_string(path)
-            .context("Failed to read config file")?;
-        let config: ServerConfig = toml::from_str(&content)
-            .context("Failed to parse config file")?;
-        config.validate()
-            .context("Configuration validation failed")?;
+        let content =
+            fs::read_to_string(path).context("Failed to read config file")?;
+        let config: ServerConfig =
+            toml::from_str(&content).context("Failed to parse config file")?;
+        config.validate().context("Configuration validation failed")?;
         Ok(config)
     }
 
@@ -79,11 +81,16 @@ impl ServerConfig {
     fn parse_poll_secs_from_env() -> Result<u64> {
         match std::env::var(env_vars::POLL_SECS) {
             Ok(value) => {
-                let poll_secs = value.parse()
-                    .context("Invalid POLL_SECS value")?;
-                if !(constants::MIN_POLL_SECS..=constants::MAX_POLL_SECS).contains(&poll_secs) {
-                    eyre::bail!("POLL_SECS must be between {} and {}",
-                               constants::MIN_POLL_SECS, constants::MAX_POLL_SECS);
+                let poll_secs =
+                    value.parse().context("Invalid POLL_SECS value")?;
+                if !(constants::MIN_POLL_SECS..=constants::MAX_POLL_SECS)
+                    .contains(&poll_secs)
+                {
+                    eyre::bail!(
+                        "POLL_SECS must be between {} and {}",
+                        constants::MIN_POLL_SECS,
+                        constants::MAX_POLL_SECS
+                    );
                 }
                 Ok(poll_secs)
             }
@@ -94,8 +101,7 @@ impl ServerConfig {
     /// Parse RPC address from environment variable
     fn parse_rpc_addr_from_env() -> Result<SocketAddr> {
         match std::env::var(env_vars::RPC_ADDR) {
-            Ok(value) => value.parse()
-                .context("Invalid RPC_ADDR format"),
+            Ok(value) => value.parse().context("Invalid RPC_ADDR format"),
             Err(_) => Ok(default_rpc_addr()),
         }
     }

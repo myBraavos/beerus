@@ -1,10 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use axum::{
-    extract::State,
-    http::StatusCode,
-    Json,
-};
+use axum::{extract::State, http::StatusCode, Json};
 
 use crate::rpc::context::Context;
 

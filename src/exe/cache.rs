@@ -243,5 +243,4 @@ impl<T: StateReader + BlockifierState + HasBlockHash> BlockifierState
     ) -> blockifier::state::state_api::StateResult<()> {
         self.inner.set_compiled_class_hash(class_hash, compiled_class_hash)
     }
-
 }

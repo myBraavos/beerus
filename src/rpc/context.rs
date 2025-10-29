@@ -2,21 +2,26 @@ use std::sync::Arc;
 
 use iamgroot::jsonrpc;
 
-use crate::r#gen::{GetBlockWithReceiptsResult, GetTransactionByBlockIdAndIndexIndex, TxnReceiptWithBlockInfo};
+use crate::r#gen::{
+    GetBlockWithReceiptsResult, GetTransactionByBlockIdAndIndexIndex,
+    TxnReceiptWithBlockInfo,
+};
 use crate::{
     client::{Client, State as ClientState},
     exe,
     gen::{
-        self, Address, BlockId, Felt, FunctionCall, GetProofResult, StorageKey,
-        TxnHash, BlockNumber, ChainId, GetEventsFilter, EventsChunk,
-        BlockHashAndNumberResult, GetBlockWithTxHashesResult, GetBlockWithTxsResult,
-        GetBlockTransactionCountResult, GetClassResult, GetClassAtResult,
-        GetStateUpdateResult,         GetTransactionByHashResult, GetTransactionByBlockIdAndIndexResult,
-        GetTransactionStatusResult, SyncingResult, BroadcastedDeclareTxn,
-        AddDeclareTransactionResult, BroadcastedDeployAccountTxn, AddDeployAccountTransactionResult,
-        BroadcastedInvokeTxn, AddInvokeTransactionResult, BroadcastedTxn,
-        SimulationFlagForEstimateFee, FeeEstimate, MsgFromL1, SimulationFlag,
-        SimulatedTransaction, TxGatewayStatus, BlockTransactionTrace, TransactionTrace,
+        self, AddDeclareTransactionResult, AddDeployAccountTransactionResult,
+        AddInvokeTransactionResult, Address, BlockHashAndNumberResult, BlockId,
+        BlockNumber, BlockTransactionTrace, BroadcastedDeclareTxn,
+        BroadcastedDeployAccountTxn, BroadcastedInvokeTxn, BroadcastedTxn,
+        ChainId, EventsChunk, FeeEstimate, Felt, FunctionCall,
+        GetBlockTransactionCountResult, GetBlockWithTxHashesResult,
+        GetBlockWithTxsResult, GetClassAtResult, GetClassResult,
+        GetEventsFilter, GetProofResult, GetStateUpdateResult,
+        GetTransactionByBlockIdAndIndexResult, GetTransactionByHashResult,
+        GetTransactionStatusResult, MsgFromL1, SimulatedTransaction,
+        SimulationFlag, SimulationFlagForEstimateFee, StorageKey,
+        SyncingResult, TransactionTrace, TxGatewayStatus, TxnHash,
     },
 };
 
@@ -56,20 +61,14 @@ impl gen::Rpc for Context {
         contract_address: Address,
         keys: Vec<StorageKey>,
     ) -> Result<GetProofResult, jsonrpc::Error> {
-        self.client
-            .starknet()
-            .getProof(block_id, contract_address, keys)
-            .await
+        self.client.starknet().getProof(block_id, contract_address, keys).await
     }
 
     async fn getTxStatus(
         &self,
         transaction_hash: TxnHash,
     ) -> Result<TxGatewayStatus, jsonrpc::Error> {
-        self.client
-            .starknet()
-            .getTxStatus(transaction_hash)
-            .await
+        self.client.starknet().getTxStatus(transaction_hash).await
     }
 
     async fn version(&self) -> Result<String, jsonrpc::Error> {
@@ -84,10 +83,7 @@ impl gen::Rpc for Context {
         &self,
         declare_transaction: BroadcastedDeclareTxn,
     ) -> Result<AddDeclareTransactionResult, jsonrpc::Error> {
-        self.client
-            .starknet()
-            .addDeclareTransaction(declare_transaction)
-            .await
+        self.client.starknet().addDeclareTransaction(declare_transaction).await
     }
 
     async fn addDeployAccountTransaction(
@@ -104,13 +100,12 @@ impl gen::Rpc for Context {
         &self,
         invoke_transaction: BroadcastedInvokeTxn,
     ) -> Result<AddInvokeTransactionResult, jsonrpc::Error> {
-        self.client
-            .starknet()
-            .addInvokeTransaction(invoke_transaction)
-            .await
+        self.client.starknet().addInvokeTransaction(invoke_transaction).await
     }
 
-    async fn blockHashAndNumber(&self) -> Result<BlockHashAndNumberResult, jsonrpc::Error> {
+    async fn blockHashAndNumber(
+        &self,
+    ) -> Result<BlockHashAndNumberResult, jsonrpc::Error> {
         self.client.starknet().blockHashAndNumber().await
     }
 
@@ -123,7 +118,10 @@ impl gen::Rpc for Context {
         request: FunctionCall,
         _block_id: BlockId, // TODO: use block_id to make a call on specific state
     ) -> Result<Vec<Felt>, jsonrpc::Error> {
-        let state = self.client.get_state().await
+        let state = self
+            .client
+            .get_state()
+            .await
             .map_err(|e| jsonrpc::Error::new(-32602, e.to_string()))?;
         let client = gen::client::blocking::Client::new(
             &self.client.starknet().url,
@@ -162,50 +160,35 @@ impl gen::Rpc for Context {
         message: MsgFromL1,
         block_id: BlockId,
     ) -> Result<FeeEstimate, jsonrpc::Error> {
-        self.client
-            .starknet()
-            .estimateMessageFee(message, block_id)
-            .await
+        self.client.starknet().estimateMessageFee(message, block_id).await
     }
 
     async fn getBlockTransactionCount(
         &self,
         block_id: BlockId,
     ) -> Result<GetBlockTransactionCountResult, jsonrpc::Error> {
-        self.client
-            .starknet()
-            .getBlockTransactionCount(block_id)
-            .await
+        self.client.starknet().getBlockTransactionCount(block_id).await
     }
 
     async fn getBlockWithReceipts(
         &self,
         block_id: BlockId,
     ) -> Result<GetBlockWithReceiptsResult, jsonrpc::Error> {
-        self.client
-            .starknet()
-            .getBlockWithReceipts(block_id)
-            .await
+        self.client.starknet().getBlockWithReceipts(block_id).await
     }
 
     async fn getBlockWithTxHashes(
         &self,
         block_id: BlockId,
     ) -> Result<GetBlockWithTxHashesResult, jsonrpc::Error> {
-        self.client
-            .starknet()
-            .getBlockWithTxHashes(block_id)
-            .await
+        self.client.starknet().getBlockWithTxHashes(block_id).await
     }
 
     async fn getBlockWithTxs(
         &self,
         block_id: BlockId,
     ) -> Result<GetBlockWithTxsResult, jsonrpc::Error> {
-        self.client
-            .starknet()
-            .getBlockWithTxs(block_id)
-            .await
+        self.client.starknet().getBlockWithTxs(block_id).await
     }
 
     async fn getClass(
@@ -213,10 +196,7 @@ impl gen::Rpc for Context {
         block_id: BlockId,
         class_hash: Felt,
     ) -> Result<GetClassResult, jsonrpc::Error> {
-        self.client
-            .starknet()
-            .getClass(block_id, class_hash)
-            .await
+        self.client.starknet().getClass(block_id, class_hash).await
     }
 
     async fn getClassAt(
@@ -224,10 +204,7 @@ impl gen::Rpc for Context {
         block_id: BlockId,
         contract_address: Address,
     ) -> Result<GetClassAtResult, jsonrpc::Error> {
-        self.client
-            .starknet()
-            .getClassAt(block_id, contract_address)
-            .await
+        self.client.starknet().getClassAt(block_id, contract_address).await
     }
 
     async fn getClassHashAt(
@@ -235,20 +212,14 @@ impl gen::Rpc for Context {
         block_id: BlockId,
         contract_address: Address,
     ) -> Result<Felt, jsonrpc::Error> {
-        self.client
-            .starknet()
-            .getClassHashAt(block_id, contract_address)
-            .await
+        self.client.starknet().getClassHashAt(block_id, contract_address).await
     }
 
     async fn getEvents(
         &self,
         filter: GetEventsFilter,
     ) -> Result<EventsChunk, jsonrpc::Error> {
-        self.client
-            .starknet()
-            .getEvents(filter)
-            .await
+        self.client.starknet().getEvents(filter).await
     }
 
     async fn getNonce(
@@ -256,20 +227,14 @@ impl gen::Rpc for Context {
         block_id: BlockId,
         contract_address: Address,
     ) -> Result<Felt, jsonrpc::Error> {
-        self.client
-            .starknet()
-            .getNonce(block_id, contract_address)
-            .await
+        self.client.starknet().getNonce(block_id, contract_address).await
     }
 
     async fn getStateUpdate(
         &self,
         block_id: BlockId,
     ) -> Result<GetStateUpdateResult, jsonrpc::Error> {
-        self.client
-            .starknet()
-            .getStateUpdate(block_id)
-            .await
+        self.client.starknet().getStateUpdate(block_id).await
     }
 
     async fn getStorageAt(
@@ -288,10 +253,7 @@ impl gen::Rpc for Context {
         &self,
         transaction_hash: TxnHash,
     ) -> Result<GetTransactionByHashResult, jsonrpc::Error> {
-        self.client
-            .starknet()
-            .getTransactionByHash(transaction_hash)
-            .await
+        self.client.starknet().getTransactionByHash(transaction_hash).await
     }
 
     async fn getTransactionByBlockIdAndIndex(
@@ -309,20 +271,14 @@ impl gen::Rpc for Context {
         &self,
         transaction_hash: TxnHash,
     ) -> Result<TxnReceiptWithBlockInfo, jsonrpc::Error> {
-        self.client
-            .starknet()
-            .getTransactionReceipt(transaction_hash)
-            .await
+        self.client.starknet().getTransactionReceipt(transaction_hash).await
     }
 
     async fn getTransactionStatus(
         &self,
         transaction_hash: TxnHash,
     ) -> Result<GetTransactionStatusResult, jsonrpc::Error> {
-        self.client
-            .starknet()
-            .getTransactionStatus(transaction_hash)
-            .await
+        self.client.starknet().getTransactionStatus(transaction_hash).await
     }
 
     async fn simulateTransactions(
@@ -349,19 +305,13 @@ impl gen::Rpc for Context {
         &self,
         block_id: BlockId,
     ) -> Result<Vec<BlockTransactionTrace>, jsonrpc::Error> {
-        self.client
-            .starknet()
-            .traceBlockTransactions(block_id)
-            .await
+        self.client.starknet().traceBlockTransactions(block_id).await
     }
 
     async fn traceTransaction(
         &self,
         transaction_hash: TxnHash,
     ) -> Result<TransactionTrace, jsonrpc::Error> {
-        self.client
-            .starknet()
-            .traceTransaction(transaction_hash)
-            .await
+        self.client.starknet().traceTransaction(transaction_hash).await
     }
 }

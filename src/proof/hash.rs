@@ -4,7 +4,9 @@ use starknet_crypto::{
 };
 
 use crate::gen::Felt;
-use crate::proof::types::{CONTRACT_STATE_HASH_VERSION, ERROR_CODE_FIELD_ELEMENT};
+use crate::proof::types::{
+    CONTRACT_STATE_HASH_VERSION, ERROR_CODE_FIELD_ELEMENT,
+};
 
 /// Calculate contract state hash
 pub fn calculate_contract_state_hash(
@@ -22,7 +24,10 @@ pub fn calculate_contract_state_hash(
     // The contract state hash is defined as H(H(H(hash, root), nonce), CONTRACT_STATE_HASH_VERSION)
     let hash = pedersen_hash(&class_hash_fe, &storage_root_fe);
     let hash = pedersen_hash(&hash, &nonce_fe);
-    let hash = pedersen_hash(&hash, &FieldElement::from_hex(CONTRACT_STATE_HASH_VERSION).unwrap());
+    let hash = pedersen_hash(
+        &hash,
+        &FieldElement::from_hex(CONTRACT_STATE_HASH_VERSION).unwrap(),
+    );
 
     Felt::try_new(&format!("0x{:x}", hash))
         .map_err(|_| create_field_element_error())
@@ -33,9 +38,11 @@ pub fn calculate_global_root(
     class_commitment: &Felt,
     storage_commitment: Felt,
 ) -> Result<Felt, jsonrpc::Error> {
-    let global_state_ver = FieldElement::from_bytes_be_slice(b"STARKNET_STATE_V0");
-    let storage_commitment_fe = FieldElement::from_hex(storage_commitment.as_ref())
-        .map_err(|_| create_field_element_error())?;
+    let global_state_ver =
+        FieldElement::from_bytes_be_slice(b"STARKNET_STATE_V0");
+    let storage_commitment_fe =
+        FieldElement::from_hex(storage_commitment.as_ref())
+            .map_err(|_| create_field_element_error())?;
     let class_commitment_fe = FieldElement::from_hex(class_commitment.as_ref())
         .map_err(|_| create_field_element_error())?;
 

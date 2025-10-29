@@ -14,14 +14,11 @@
 
 use blockifier::execution::call_info::CallInfo;
 
-use crate::{
-    client::State,
-    gen,
-};
+use crate::{client::State, gen};
 
 pub mod cache;
-pub mod contract_loader;
 pub mod context;
+pub mod contract_loader;
 pub mod err;
 pub mod executor;
 pub mod map;
@@ -59,4 +56,3 @@ pub fn call<T: gen::client::blocking::HttpClient + Clone>(
     let executor = executor::CallExecutor::new(client, state);
     executor.execute(function_call)
 }
-

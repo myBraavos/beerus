@@ -1,21 +1,19 @@
 use std::sync::Arc;
 
 use blockifier::{
+    blockifier_versioned_constants::VersionedConstants,
     bouncer::BouncerConfig,
     context::{BlockContext, ChainInfo, FeeTokenAddresses, TransactionContext},
     transaction::objects::{
         CommonAccountFields, DeprecatedTransactionInfo, TransactionInfo,
     },
-    blockifier_versioned_constants::VersionedConstants,
 };
 use starknet_api::{
     block::{
         BlockInfo, BlockNumber as StarknetBlockNumber, BlockTimestamp,
         GasPriceVector, GasPrices, NonzeroGasPrice,
     },
-    core::{
-        ChainId as BlockifierChainId, ContractAddress, Nonce,
-    },
+    core::{ChainId as BlockifierChainId, ContractAddress, Nonce},
     hash::StarkHash,
     transaction::{
         fields::{Fee, TransactionSignature},
@@ -74,7 +72,10 @@ impl ExecutionContextBuilder {
     }
 
     /// Set the sequencer address
-    pub fn sequencer_address(mut self, sequencer_address: ContractAddress) -> Self {
+    pub fn sequencer_address(
+        mut self,
+        sequencer_address: ContractAddress,
+    ) -> Self {
         self.sequencer_address = Some(sequencer_address);
         self
     }
@@ -120,7 +121,8 @@ impl ExecutionContextBuilder {
             },
         };
 
-        let versioned_constants = VersionedConstants::latest_constants().to_owned();
+        let versioned_constants =
+            VersionedConstants::latest_constants().to_owned();
         let bouncer_config = BouncerConfig::default();
 
         let block_context = BlockContext::new(
@@ -145,7 +147,10 @@ impl ExecutionContextBuilder {
             max_fee: Fee::default(),
         });
 
-        Ok(TransactionContext { block_context: Arc::new(block_context), tx_info })
+        Ok(TransactionContext {
+            block_context: Arc::new(block_context),
+            tx_info,
+        })
     }
 }
 

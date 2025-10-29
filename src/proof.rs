@@ -17,16 +17,14 @@
 //! - **Contract Proofs**: Verify contract state and class information
 //! - **Global Proofs**: Verify the global state root
 
-pub mod types;
 pub mod hash;
 pub mod merkle;
 pub mod parser;
+pub mod types;
 
 use iamgroot::jsonrpc;
 
-use crate::gen::{
-    Address, Felt, GetProofResult, StorageKey,
-};
+use crate::gen::{Address, Felt, GetProofResult, StorageKey};
 
 /// Verify a complete proof
 ///
@@ -59,12 +57,26 @@ pub fn verify_proof(
     key: StorageKey,
     value: Felt,
 ) -> Result<(), jsonrpc::Error> {
-    let contract_leaf = proof.contracts_proof.contract_leaves_data.first().ok_or(
-        jsonrpc::Error::new(-32700, "No contract leaf data found".to_string()),
-    )?;
+    let contract_leaf =
+        proof.contracts_proof.contract_leaves_data.first().ok_or(
+            jsonrpc::Error::new(
+                -32700,
+                "No contract leaf data found".to_string(),
+            ),
+        )?;
 
-    parser::ProofParser::verify_storage_proofs(proof, contract_leaf, key, value)?;
-    parser::ProofParser::verify_contracts_proof(proof, contract_leaf, global_root, contract_address)
+    parser::ProofParser::verify_storage_proofs(
+        proof,
+        contract_leaf,
+        key,
+        value,
+    )?;
+    parser::ProofParser::verify_contracts_proof(
+        proof,
+        contract_leaf,
+        global_root,
+        contract_address,
+    )
 }
 
 impl GetProofResult {
@@ -97,7 +109,8 @@ impl GetProofResult {
 #[cfg(test)]
 mod tests {
     use crate::gen::{
-        Address, Felt, GetProofResult, Node, StorageKey, ContractLeafData, ProofData, GlobalRoots
+        Address, ContractLeafData, Felt, GetProofResult, GlobalRoots, Node,
+        ProofData, StorageKey,
     };
 
     #[test]
@@ -114,7 +127,8 @@ mod tests {
             "node_hash": "0x0"
         }]"#;
         let proof: Vec<Node> = serde_json::from_str(edge_node_string).unwrap();
-        let ret_val = crate::proof::merkle::parse_proof(key, value, &proof).unwrap();
+        let ret_val =
+            crate::proof::merkle::parse_proof(key, value, &proof).unwrap();
 
         assert!(ret_val.is_some());
         let ret_val = ret_val.unwrap();
@@ -168,7 +182,8 @@ mod tests {
             "node_hash": "0x0"
         }]"#;
         let proof: Vec<Node> = serde_json::from_str(proof_string).unwrap();
-        let ret_val = crate::proof::merkle::parse_proof(key, value, &proof).unwrap();
+        let ret_val =
+            crate::proof::merkle::parse_proof(key, value, &proof).unwrap();
 
         assert!(ret_val.is_some());
         let ret_val = ret_val.unwrap();
@@ -302,11 +317,16 @@ mod tests {
                 contracts_tree_root: Felt::try_new("0x0").unwrap(),
             },
         };
-        let contract_leaf = &storage_proof.contracts_proof.contract_leaves_data[0];
+        let contract_leaf =
+            &storage_proof.contracts_proof.contract_leaves_data[0];
 
         assert!(crate::proof::parser::ProofParser::verify_storage_proofs(
-            &storage_proof, contract_leaf, key, value
-        ).is_ok());
+            &storage_proof,
+            contract_leaf,
+            key,
+            value
+        )
+        .is_ok());
     }
 
     #[test]
@@ -342,11 +362,16 @@ mod tests {
                 contracts_tree_root: Felt::try_new("0x0").unwrap(),
             },
         };
-        let contract_leaf = &storage_proof.contracts_proof.contract_leaves_data[0];
+        let contract_leaf =
+            &storage_proof.contracts_proof.contract_leaves_data[0];
 
         assert!(crate::proof::parser::ProofParser::verify_storage_proofs(
-            &storage_proof, contract_leaf, key, value
-        ).is_err());
+            &storage_proof,
+            contract_leaf,
+            key,
+            value
+        )
+        .is_err());
     }
 
     #[test]
@@ -365,8 +390,8 @@ mod tests {
                 contract_leaf.storage_root.as_ref(),
                 contract_leaf.nonce.as_ref()
             )
-                .unwrap()
-                .as_ref(),
+            .unwrap()
+            .as_ref(),
             Felt::try_new(expected).unwrap().as_ref()
         );
     }
@@ -427,10 +452,15 @@ mod tests {
         .unwrap();
         let contract_address = Address(Felt::try_new("0x6a05844a03bb9e744479e3298f54705a35966ab04140d3d8dd797c1f6dc49d0")
                 .unwrap());
-        let contract_leaf = &storage_proof.contracts_proof.contract_leaves_data[0];
+        let contract_leaf =
+            &storage_proof.contracts_proof.contract_leaves_data[0];
         assert!(crate::proof::parser::ProofParser::verify_contracts_proof(
-            &storage_proof, contract_leaf, global_root, contract_address
-        ).is_ok());
+            &storage_proof,
+            contract_leaf,
+            global_root,
+            contract_address
+        )
+        .is_ok());
     }
 
     #[test]
@@ -454,9 +484,14 @@ mod tests {
         };
         let global_root = Felt::try_new("0x0").unwrap();
         let contract_address = Address(Felt::try_new("0x0").unwrap());
-        let contract_leaf = &invalid_storage_proof.contracts_proof.contract_leaves_data[0];
+        let contract_leaf =
+            &invalid_storage_proof.contracts_proof.contract_leaves_data[0];
         assert!(crate::proof::parser::ProofParser::verify_contracts_proof(
-            &invalid_storage_proof, contract_leaf, global_root, contract_address
-        ).is_err());
+            &invalid_storage_proof,
+            contract_leaf,
+            global_root,
+            contract_address
+        )
+        .is_err());
     }
 }

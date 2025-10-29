@@ -1,8 +1,8 @@
 use beerus::client::{Client, Http};
 use beerus::config::Config;
 use beerus::gen::{Address, Felt, FunctionCall};
-use eyre::{Result};
 use beerus::storage::sql_storage_provider::SqlStorageProvider;
+use eyre::Result;
 use std::sync::Arc;
 
 #[tokio::main]
@@ -13,16 +13,15 @@ async fn main() -> Result<()> {
         starknet_rpc: format!(
             "https://starknet-mainnet.public.blastapi.io/rpc/v0_9"
         ),
-        gateway_url: format!(
-            "https://feeder.alpha-mainnet.starknet.io"
-        ),
-        database_url:format!(
+        gateway_url: format!("https://feeder.alpha-mainnet.starknet.io"),
+        database_url: format!(
             "postgresql://postgres:postgres@localhost:5432/beerus"
         ),
     };
 
     let http = Http::new();
-    let storage = Arc::new(SqlStorageProvider::new(&config.database_url).await?);
+    let storage =
+        Arc::new(SqlStorageProvider::new(&config.database_url).await?);
     let beerus = Client::new(&config, http, storage).await?;
 
     let calldata = FunctionCall {

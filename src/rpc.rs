@@ -25,9 +25,7 @@ pub mod handler;
 
 use std::sync::Arc;
 
-use axum::{
-    routing::post, Router,
-};
+use axum::{routing::post, Router};
 
 use crate::client::Client;
 use crate::rpc::context::Context;
@@ -54,9 +52,7 @@ impl Server {
     /// and the context set up for request handling.
     pub fn router(self) -> Router {
         let ctx = Context::new(self.client);
-        Router::new()
-            .route("/", post(handle_request))
-            .with_state(ctx)
+        Router::new().route("/", post(handle_request)).with_state(ctx)
     }
 }
 

@@ -1,6 +1,8 @@
-use blockifier::state::state_api::{State as BlockifierState, StateReader, StateResult};
+use blockifier::state::state_api::{
+    State as BlockifierState, StateReader, StateResult,
+};
 use starknet_api::{
-    core::{ContractAddress, ClassHash, CompiledClassHash, Nonce},
+    core::{ClassHash, CompiledClassHash, ContractAddress, Nonce},
     state::StorageKey as StarknetStorageKey,
 };
 use starknet_types_core::felt::Felt as StarkFelt;
@@ -17,7 +19,9 @@ pub struct StateProxy<T: gen::client::blocking::HttpClient> {
     pub state: State,
 }
 
-impl<T: gen::client::blocking::HttpClient> cache::HasBlockHash for StateProxy<T> {
+impl<T: gen::client::blocking::HttpClient> cache::HasBlockHash
+    for StateProxy<T>
+{
     fn get_block_hash(&self) -> &gen::Felt {
         &self.state.block_hash
     }
@@ -60,11 +64,12 @@ impl<T: gen::client::blocking::HttpClient> StateReader for StateProxy<T> {
 
         let global_root = self.state.root.clone();
         let value = ret.clone();
-        crate::proof::verify_proof(&proof, global_root, address, key, value).map_err(|e| {
-            blockifier::state::errors::StateError::StateReadError(format!(
-                "Failed to verify merkle proof: {e:?}"
-            ))
-        })?;
+        crate::proof::verify_proof(&proof, global_root, address, key, value)
+            .map_err(|e| {
+                blockifier::state::errors::StateError::StateReadError(format!(
+                    "Failed to verify merkle proof: {e:?}"
+                ))
+            })?;
         tracing::info!("get_storage_at: proof verified");
 
         Ok(StarkFelt::try_from(ret)?)
@@ -115,8 +120,10 @@ impl<T: gen::client::blocking::HttpClient> StateReader for StateProxy<T> {
     fn get_compiled_class(
         &self,
         class_hash: ClassHash,
-    ) -> Result<blockifier::execution::contract_class::RunnableCompiledClass, blockifier::state::errors::StateError>
-    {
+    ) -> Result<
+        blockifier::execution::contract_class::RunnableCompiledClass,
+        blockifier::state::errors::StateError,
+    > {
         tracing::info!(?class_hash, "get_compiled_class");
 
         let block_id = gen::BlockId::BlockHash {
@@ -133,11 +140,16 @@ impl<T: gen::client::blocking::HttpClient> StateReader for StateProxy<T> {
         // Convert to blockifier's ContractClass via explicit variant conversion
         let contract_class = match ret {
             gen::GetClassResult::ContractClass(contract_class) => {
-                let sierra_version = contract_class.contract_class_version.parse()
-                    .map_err(|_| Error::Custom("Failed to parse SierraVersion"))?;
+                let sierra_version =
+                    contract_class.contract_class_version.parse().map_err(
+                        |_| Error::Custom("Failed to parse SierraVersion"),
+                    )?;
                 let casm_class = cairo_lang_starknet_classes::casm_contract_class::CasmContractClass::from_contract_class(contract_class.into(), true, u32::MAX as usize)
                     .map_err(|_| Error::Custom("Failed to convert Sierra program"))?;
-                starknet_api::contract_class::ContractClass::V1((casm_class, sierra_version))
+                starknet_api::contract_class::ContractClass::V1((
+                    casm_class,
+                    sierra_version,
+                ))
             }
             // TODO: add cairo 0 support
             //     deprecated_contract_class
@@ -145,7 +157,12 @@ impl<T: gen::client::blocking::HttpClient> StateReader for StateProxy<T> {
             //     //     deprecated_contract_class.try_into().map_err(|_| Error::Custom("Failed to convert DeprecatedContractClass"))?;
             //     // ContractClass::V0(deprecated_contract_class)
             // }
-            _ => return Err(Error::Custom("Failed to convert DeprecatedContractClass").into()),
+            _ => {
+                return Err(Error::Custom(
+                    "Failed to convert DeprecatedContractClass",
+                )
+                .into())
+            }
         };
         let runnable_compiled_class =
             blockifier::execution::contract_class::RunnableCompiledClass::try_from(contract_class)?;
@@ -158,7 +175,9 @@ impl<T: gen::client::blocking::HttpClient> StateReader for StateProxy<T> {
         class_hash: ClassHash,
     ) -> StateResult<CompiledClassHash> {
         tracing::info!(?class_hash, "get_compiled_class_hash");
-        Err(blockifier::state::errors::StateError::UndeclaredClassHash(class_hash))
+        Err(blockifier::state::errors::StateError::UndeclaredClassHash(
+            class_hash,
+        ))
     }
 }
 

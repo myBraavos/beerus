@@ -1,9 +1,11 @@
 use iamgroot::jsonrpc;
 
-use crate::gen::{Address, Felt, GetProofResult, StorageKey, ContractLeafData};
-use crate::proof::hash::{calculate_contract_state_hash, calculate_global_root};
+use crate::gen::{Address, ContractLeafData, Felt, GetProofResult, StorageKey};
+use crate::proof::hash::{
+    calculate_contract_state_hash, calculate_global_root,
+};
 use crate::proof::merkle::parse_proof;
-use crate::proof::types::{ERROR_CODE_PROOF_INVALID};
+use crate::proof::types::ERROR_CODE_PROOF_INVALID;
 
 /// Parser for proof verification
 pub struct ProofParser;
@@ -17,9 +19,10 @@ impl ProofParser {
         storage_value: Felt,
     ) -> Result<(), jsonrpc::Error> {
         let expected_storage_root = &contract_leaf.storage_root;
-        let storage_proofs = proof.contracts_storage_proofs.first().ok_or(
-            create_proof_error("No storage proof found"),
-        )?;
+        let storage_proofs = proof
+            .contracts_storage_proofs
+            .first()
+            .ok_or(create_proof_error("No storage proof found"))?;
 
         match parse_proof(storage_key.as_ref(), storage_value, storage_proofs)? {
             Some(computed_storage_root) if computed_storage_root.as_ref() == expected_storage_root.as_ref() => {
@@ -63,9 +66,12 @@ impl ProofParser {
                     computed_storage_commitment.clone(),
                 )?;
 
-                let expected_state_commitment = &proof.global_roots.contracts_tree_root;
-                if expected_state_commitment.as_ref() == computed_storage_commitment.as_ref()
-                    && expected_global_root.as_ref() == computed_global_root.as_ref()
+                let expected_state_commitment =
+                    &proof.global_roots.contracts_tree_root;
+                if expected_state_commitment.as_ref()
+                    == computed_storage_commitment.as_ref()
+                    && expected_global_root.as_ref()
+                        == computed_global_root.as_ref()
                 {
                     Ok(())
                 } else {

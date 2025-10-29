@@ -12,12 +12,14 @@ fn convert_entry_point(
     ep: gen::DeprecatedCairoEntryPoint,
 ) -> Result<starknet_api::deprecated_contract_class::EntryPointV0, Error> {
     Ok(starknet_api::deprecated_contract_class::EntryPointV0 {
-        selector: starknet_api::core::EntryPointSelector(ep.selector.try_into()?),
+        selector: starknet_api::core::EntryPointSelector(
+            ep.selector.try_into()?,
+        ),
         offset: starknet_api::deprecated_contract_class::EntryPointOffset(
             ep.offset
                 .as_ref()
                 .parse::<usize>()
-                .map_err(|e| Error::Program(format!("Invalid offset: {e}")))?
+                .map_err(|e| Error::Program(format!("Invalid offset: {e}")))?,
         ),
     })
 }
@@ -26,10 +28,7 @@ fn convert_entry_point(
 fn convert_entry_points(
     entry_points: Vec<gen::DeprecatedCairoEntryPoint>,
 ) -> Result<Vec<starknet_api::deprecated_contract_class::EntryPointV0>, Error> {
-    entry_points
-        .into_iter()
-        .map(convert_entry_point)
-        .collect()
+    entry_points.into_iter().map(convert_entry_point).collect()
 }
 
 /// Convert deprecated contract class from gen format to starknet_api format
@@ -44,21 +43,31 @@ fn convert_deprecated_contract_class(
 
     if let Some(constructor) = class.entry_points_by_type.constructor {
         let converted = convert_entry_points(constructor)?;
-        entry_points_by_type.insert(starknet_api::contract_class::EntryPointType::Constructor, converted);
+        entry_points_by_type.insert(
+            starknet_api::contract_class::EntryPointType::Constructor,
+            converted,
+        );
     }
 
     if let Some(external) = class.entry_points_by_type.external {
         let converted = convert_entry_points(external)?;
-        entry_points_by_type.insert(starknet_api::contract_class::EntryPointType::External, converted);
+        entry_points_by_type.insert(
+            starknet_api::contract_class::EntryPointType::External,
+            converted,
+        );
     }
 
     if let Some(l1_handler) = class.entry_points_by_type.l1_handler {
         let converted = convert_entry_points(l1_handler)?;
-        entry_points_by_type.insert(starknet_api::contract_class::EntryPointType::L1Handler, converted);
+        entry_points_by_type.insert(
+            starknet_api::contract_class::EntryPointType::L1Handler,
+            converted,
+        );
     }
 
     // Convert the program
-    let program: starknet_api::deprecated_contract_class::Program = serde_json::from_str(&program)?;
+    let program: starknet_api::deprecated_contract_class::Program =
+        serde_json::from_str(&program)?;
 
     Ok(DeprecatedContractClass {
         abi: None, // We'll skip ABI conversion for now
