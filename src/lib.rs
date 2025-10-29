@@ -1,6 +1,7 @@
 pub mod client;
 pub mod config;
 pub mod convert;
+pub mod eth;
 pub mod exe;
 pub mod feeder;
 pub mod storage;

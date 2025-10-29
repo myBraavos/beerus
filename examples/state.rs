@@ -10,6 +10,7 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
 
     let config = Config {
+        eth_rpc: format!("https://eth-mainnet.public.blastapi.io"),
         starknet_rpc: format!(
             "https://starknet-mainnet.public.blastapi.io/rpc/v0_9"
         ),

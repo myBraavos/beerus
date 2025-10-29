@@ -15,6 +15,7 @@ mod constants {
 
 /// Environment variable names
 mod env_vars {
+    pub const ETH_RPC: &str = "ETH_RPC";
     pub const STARKNET_RPC: &str = "STARKNET_RPC";
     pub const GATEWAY_URL: &str = "GATEWAY_URL";
     pub const DATABASE_URL: &str = "DATABASE_URL";
@@ -41,6 +42,8 @@ pub struct ServerConfig {
 #[derive(Clone, Deserialize, Debug, Validate)]
 pub struct Config {
     #[validate(url)]
+    pub eth_rpc: String,
+    #[validate(url)]
     pub starknet_rpc: String,
     #[validate(url)]
     pub gateway_url: String,
@@ -57,6 +60,7 @@ impl ServerConfig {
 
         Ok(Self {
             client: Config {
+                eth_rpc: Self::parse_eth_rpc_from_env()?,
                 starknet_rpc: Self::parse_starknet_rpc_from_env()?,
                 gateway_url: Self::parse_gateway_url_from_env()?,
                 #[cfg(not(target_arch = "wasm32"))]
@@ -106,6 +110,12 @@ impl ServerConfig {
         }
     }
 
+    /// Parse ETH RPC URL from environment variable
+    fn parse_eth_rpc_from_env() -> Result<String> {
+        std::env::var(env_vars::ETH_RPC)
+            .context("ETH_RPC environment variable is required")
+    }
+
     /// Parse Starknet RPC URL from environment variable
     fn parse_starknet_rpc_from_env() -> Result<String> {
         std::env::var(env_vars::STARKNET_RPC)
@@ -145,6 +155,7 @@ mod tests {
         let config = ServerConfig {
             client: Config {
                 starknet_rpc: "invalid-url".to_string(),
+                eth_rpc: "".to_string(),
                 gateway_url: "".to_string(),
                 #[cfg(not(target_arch = "wasm32"))]
                 database_url: "".to_string(),
@@ -163,6 +174,7 @@ mod tests {
         let config = ServerConfig {
             client: Config {
                 starknet_rpc: "https://example.com".to_string(),
+                eth_rpc: "".to_string(),
                 gateway_url: "".to_string(),
                 #[cfg(not(target_arch = "wasm32"))]
                 database_url: "".to_string(),
@@ -181,6 +193,7 @@ mod tests {
         let config = ServerConfig {
             client: Config {
                 starknet_rpc: "https://example.com".to_string(),
+                eth_rpc: "".to_string(),
                 gateway_url: "".to_string(),
                 #[cfg(not(target_arch = "wasm32"))]
                 database_url: "".to_string(),

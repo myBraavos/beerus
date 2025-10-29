@@ -31,16 +31,25 @@ async fn main() -> eyre::Result<()> {
                     Err(_) => (0, None),
                 };
             let mut tick = tokio::time::interval(period);
-            let mut gateway_state =
-                beerus.get_latest_gateway_state().await.unwrap(); // FIXME: handle 'unwrap'
+            // FIXME: handle all 'unwrap's
+            let l1_state = beerus.l1().get_l1_state().await.unwrap();
             let (from_block, prev_hash) =
-                if gateway_state.block_number - latest_stored_block > 100 {
-                    // FIXME: it should start from the latest L1 block, '100' is a placeholder
-                    (gateway_state.block_number - 100, None)
+                if l1_state.block_number > latest_stored_block {
+                    tracing::info!(
+                        "Staring the sync from L1 block {}",
+                        l1_state.block_number
+                    );
+                    beerus.storage().write_state(&l1_state).await.unwrap();
+                    (l1_state.block_number + 1, Some(l1_state.block_hash))
                 } else {
+                    tracing::info!(
+                        "Staring the sync from block {}",
+                        latest_stored_block
+                    );
                     (latest_stored_block + 1, latest_stored_hash)
                 };
-            gateway_state = beerus.get_gateway_state(from_block).await.unwrap();
+            let mut gateway_state =
+                beerus.get_gateway_state(from_block).await.unwrap();
             let mut verified_state = beerus
                 .get_verified_state(&gateway_state.block_hash, prev_hash)
                 .await

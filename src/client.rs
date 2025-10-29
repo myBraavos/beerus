@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use crate::client::state::GatewayState;
 use crate::config::Config;
+use crate::eth::core_contract::L1CoreContract;
 use crate::feeder::GatewayClient;
 use crate::gen::client::Client as StarknetClient;
 use crate::gen::BlockHash;
@@ -36,6 +37,7 @@ pub struct Client<
     http: T,
     gateway: GatewayClient,
     storage: Arc<dyn StorageProviderTrait>,
+    l1_core_contract: L1CoreContract,
 }
 
 impl<
@@ -59,7 +61,8 @@ impl<
             eyre::bail!("RPC spec version mismatch: expected {MIN_RPC_SPEC_VERSION} but got {rpc_spec_version}");
         }
         let gateway = GatewayClient::new(&config.gateway_url)?;
-        Ok(Self { starknet, http, gateway, storage })
+        let l1_core_contract = L1CoreContract::new(&config.eth_rpc);
+        Ok(Self { starknet, http, gateway, storage, l1_core_contract })
     }
 
     /// Get the underlying Starknet client
@@ -75,6 +78,11 @@ impl<
     /// Get the storage provider
     pub fn storage(&self) -> &Arc<dyn StorageProviderTrait> {
         &self.storage
+    }
+
+    /// Get the L1 core contract
+    pub fn l1(&self) -> &L1CoreContract {
+        &self.l1_core_contract
     }
 
     /// Execute a function call on the Starknet state
