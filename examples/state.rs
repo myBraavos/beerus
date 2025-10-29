@@ -16,7 +16,9 @@ async fn main() -> Result<()> {
         ),
         gateway_url: format!("https://feeder.alpha-mainnet.starknet.io"),
         database_url: format!(
-            "postgresql://myuser:mypassword@localhost:5432/beerus"
+            "postgresql://{}:{}@localhost:5432/beerus",
+            std::env::var("POSTGRES_USER").unwrap_or_else(|_| "postgres".to_string()),
+            std::env::var("POSTGRES_PASSWORD").unwrap_or_else(|_| "postgres".to_string()),
         ),
     };
 

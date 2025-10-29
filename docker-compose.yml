@@ -6,14 +6,13 @@ services:
     container_name: postgres_db
     restart: unless-stopped
     environment:
-      POSTGRES_USER: myuser
-      POSTGRES_PASSWORD: mypassword
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: beerus
     ports:
       - "5432:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
-      - ./etc/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - data_volume:/var/lib/postgresql/data
 
 volumes:
-  pgdata:
+  data_volume:

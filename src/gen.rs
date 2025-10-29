@@ -77,7 +77,7 @@ pub mod gen {
     #[serde(try_from = "i64")]
     pub struct BlockHeaderTimestamp(i64);
 
-    mod blockheadertimestamp {
+    mod block_header_timestamp {
         use super::jsonrpc;
         use super::BlockHeaderTimestamp;
 
@@ -781,13 +781,13 @@ pub mod gen {
     #[serde(try_from = "String")]
     pub struct DeprecatedContractClassProgram(String);
 
-    mod deprecatedcontractclassprogram {
+    mod deprecated_contract_class_program {
         use super::jsonrpc;
         use super::DeprecatedContractClassProgram;
         use once_cell::sync::Lazy;
         use regex::Regex;
 
-        static DEPRECATEDCONTRACTCLASSPROGRAM_REGEX: Lazy<Regex> = Lazy::new(
+        static DEPRECATED_CONTRACT_CLASS_PROGRAM_REGEX: Lazy<Regex> = Lazy::new(
             || {
                 Regex::new("^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{3}=|[A-Za-z0-9+/]{2}==)?$").expect("DeprecatedContractClassProgram: valid regex")
             },
@@ -795,7 +795,7 @@ pub mod gen {
 
         impl DeprecatedContractClassProgram {
             pub fn try_new(value: &str) -> Result<Self, jsonrpc::Error> {
-                if DEPRECATEDCONTRACTCLASSPROGRAM_REGEX.is_match(value) {
+                if DEPRECATED_CONTRACT_CLASS_PROGRAM_REGEX.is_match(value) {
                     Ok(Self(value.to_string()))
                 } else {
                     Err(jsonrpc::Error {
@@ -1012,8 +1012,8 @@ pub mod gen {
                 value.to_owned()
             } else if unprefixed.starts_with("0") {
                 // '0x0...'
-                let unzeroed = unprefixed.trim_start_matches('0');
-                format!("0x{unzeroed}")
+                let normalized = unprefixed.trim_start_matches('0');
+                format!("0x{normalized}")
             } else {
                 value.to_owned()
             }
@@ -1058,7 +1058,7 @@ pub mod gen {
         #[serde(skip_serializing_if = "Option::is_none")]
         #[serde(default)]
         #[serde(rename = "stateMutability")]
-        pub statemutability: Option<FunctionStateMutability>,
+        pub state_mutability: Option<FunctionStateMutability>,
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -1329,19 +1329,19 @@ pub mod gen {
     #[serde(try_from = "String")]
     pub struct NumAsHex(String);
 
-    mod numashex {
+    mod num_as_hex {
         use super::jsonrpc;
         use super::NumAsHex;
         use once_cell::sync::Lazy;
         use regex::Regex;
 
-        static NUMASHEX_REGEX: Lazy<Regex> = Lazy::new(|| {
+        static NUM_AS_HEX_REGEX: Lazy<Regex> = Lazy::new(|| {
             Regex::new("^0x[a-fA-F0-9]+$").expect("NumAsHex: valid regex")
         });
 
         impl NumAsHex {
             pub fn try_new(value: &str) -> Result<Self, jsonrpc::Error> {
-                if NUMASHEX_REGEX.is_match(value) {
+                if NUM_AS_HEX_REGEX.is_match(value) {
                     Ok(Self(value.to_string()))
                 } else {
                     Err(jsonrpc::Error {
@@ -1409,7 +1409,7 @@ pub mod gen {
     #[serde(try_from = "i64")]
     pub struct PendingBlockHeaderTimestamp(i64);
 
-    mod pendingblockheadertimestamp {
+    mod pending_block_header_timestamp {
         use super::jsonrpc;
         use super::PendingBlockHeaderTimestamp;
 
@@ -1547,7 +1547,7 @@ pub mod gen {
     #[serde(try_from = "i64")]
     pub struct ResultPageRequestChunkSize(i64);
 
-    mod resultpagerequestchunksize {
+    mod result_page_request_chunk_size {
         use super::jsonrpc;
         use super::ResultPageRequestChunkSize;
 
@@ -1704,7 +1704,7 @@ pub mod gen {
     #[serde(try_from = "i64")]
     pub struct StructAbiEntrySize(i64);
 
-    mod structabientrysize {
+    mod struct_abi_entry_size {
         use super::jsonrpc;
         use super::StructAbiEntrySize;
 
@@ -2050,7 +2050,7 @@ pub mod gen {
     #[serde(try_from = "i64")]
     pub struct GetTransactionByBlockIdAndIndexIndex(i64);
 
-    mod gettransactionbyblockidandindexindex {
+    mod get_transaction_by_block_id_and_index_index {
         use super::jsonrpc;
         use super::GetTransactionByBlockIdAndIndexIndex;
 
@@ -2107,7 +2107,7 @@ pub mod gen {
     #[serde(try_from = "i64")]
     pub struct GetBlockTransactionCountResult(i64);
 
-    mod getblocktransactioncountresult {
+    mod get_block_transaction_count_result {
         use super::jsonrpc;
         use super::GetBlockTransactionCountResult;
 
