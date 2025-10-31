@@ -4,7 +4,9 @@ use starknet_api::block_hash::block_hash_calculator::{
 };
 use std::sync::Arc;
 
+use crate::client::l1_range::L1Range;
 use crate::client::state::GatewayState;
+use crate::client::utils::{approximate_l1_block, find_l1_sub_range};
 use crate::config::Config;
 use crate::eth::core_contract::L1CoreContract;
 use crate::feeder::GatewayClient;
@@ -15,6 +17,7 @@ use crate::r#gen::BlockNumber;
 use crate::storage::storage_trait::StorageProviderTrait;
 
 pub mod http;
+pub mod l1_range;
 pub mod state;
 pub mod utils;
 
@@ -32,11 +35,12 @@ pub struct Client<
         + gen::client::blocking::HttpClient
         + Clone
         + 'static,
+    S: StorageProviderTrait,
 > {
     starknet: StarknetClient<T>,
     http: T,
     gateway: GatewayClient,
-    storage: Arc<dyn StorageProviderTrait>,
+    storage: Arc<S>,
     l1_core_contract: L1CoreContract,
 }
 
@@ -45,13 +49,14 @@ impl<
             + gen::client::blocking::HttpClient
             + Clone
             + 'static,
-    > Client<T>
+        S: StorageProviderTrait,
+    > Client<T, S>
 {
     /// Create a new client with the given configuration and HTTP client
     pub async fn new(
         config: &Config,
         http: T,
-        storage: Arc<dyn StorageProviderTrait>,
+        storage: Arc<S>,
     ) -> Result<Self> {
         let starknet = StarknetClient::new(&config.starknet_rpc, http.clone());
         let rpc_spec_version = starknet.specVersion().await?;
@@ -76,7 +81,7 @@ impl<
     }
 
     /// Get the storage provider
-    pub fn storage(&self) -> &Arc<dyn StorageProviderTrait> {
+    pub fn storage(&self) -> &Arc<S> {
         &self.storage
     }
 
@@ -139,6 +144,7 @@ impl<
         block_hash: &Felt,
         prev_block_hash: Option<Felt>,
     ) -> Result<State> {
+        // start with getting block receipt from the Starknet RPC
         let block_id =
             BlockId::BlockHash { block_hash: BlockHash(block_hash.clone()) };
         let block = self.starknet.getBlockWithReceipts(block_id).await?;
@@ -165,6 +171,7 @@ impl<
         let block_header: starknet_api::block::BlockHeaderWithoutHash =
             block.block_header.clone().try_into()?;
 
+        // then get state update from the Starknet RPC
         let state_update = self
             .starknet
             .getStateUpdate(gen::BlockId::BlockNumber {
@@ -178,6 +185,8 @@ impl<
         let transactions_data = block.block_body_with_receipts.transactions.into_iter().map(|transaction_and_receipt| {
             transaction_and_receipt.try_into().unwrap()
         }).collect::<Vec<starknet_api::block_hash::block_hash_calculator::TransactionHashingData>>();
+
+        // then calculate block commitments
         let block_commitments = calculate_block_commitments(
             &transactions_data,
             &state_update.state_diff.try_into()?,
@@ -185,10 +194,12 @@ impl<
             &block_header.starknet_version,
         );
 
+        // then calculate block hash
         let calculated_block_hash =
             calculate_block_hash(block_header, block_commitments)?;
         tracing::debug!(calculated_block_hash=?calculated_block_hash, "calculated block hash");
 
+        // it should match the provided hash
         if calculated_block_hash.0
             != starknet_api::hash::StarkHash::from_hex_unchecked(
                 block_hash.as_ref(),
@@ -206,19 +217,191 @@ impl<
         Ok(state)
     }
 
-    /// DEPRECATED: Use get_verified_state instead
-    /// Get the current state of the blockchain
-    pub async fn get_state(&self) -> Result<State> {
-        let block_id = BlockId::BlockTag(BlockTag::Latest);
-        let block = self.starknet.getBlockWithReceipts(block_id).await?;
-        let gen::GetBlockWithReceiptsResult::BlockWithReceipts(block) = block
-        else {
-            eyre::bail!("Pending block received, which is not supported");
+    pub async fn get_state_at(&self, block_id: BlockId) -> Result<State> {
+        match block_id {
+            BlockId::BlockTag(_) => {
+                // for the latest and pending states use the latest verified state from the storage
+                self.storage().read_latest_state().await
+            }
+            BlockId::BlockHash { block_hash } => {
+                // try to find the state in the storage
+                if let Ok(state) =
+                    self.storage().read_state_by_hash(&block_hash.0).await
+                {
+                    return Ok(state);
+                }
+
+                // if not found, fetch block number from the gateway
+                let gateway_state = self
+                    .get_gateway_state_by_id(BlockId::BlockHash { block_hash })
+                    .await?;
+
+                // and use L1 to validate the state
+                self.sync_state_using_l1(gateway_state.block_number).await
+            }
+            BlockId::BlockNumber { block_number } => {
+                // try to find the state in the storage
+                if let Ok(state) =
+                    self.storage().read_state(block_number.0).await
+                {
+                    return Ok(state);
+                }
+
+                // if not found, use L1 to validate the state
+                self.sync_state_using_l1(block_number.0).await
+            }
+        }
+    }
+
+    async fn sync_state_using_l1(&self, block_number: i64) -> Result<State> {
+        // get L1 range from storage
+        let l1_range = self.storage().read_l1_range(block_number).await?;
+        tracing::debug!(?l1_range, "L1 range from storage");
+
+        // search for the block range in L1 events that contains the target block number
+        let (start_state, end_state) =
+            self.get_minimal_l1_range(l1_range, block_number).await?;
+        tracing::debug!(?start_state, ?end_state, "found minimal L1 range");
+
+        // verify all blocks in the minimal range received from L1
+        self.storage().write_state(&start_state).await?;
+        let mut found_state = start_state.clone();
+        let mut prev_block_hash = start_state.block_hash;
+        if let Some(end_state) = end_state {
+            // no end_state means that state for exact l2 block found on l1, so we need to verify only if end_state is present
+            tracing::debug!(
+                "verifying states from {} to {}",
+                start_state.block_number,
+                end_state.block_number
+            );
+            for l2_block_number in
+                (start_state.block_number + 1)..=end_state.block_number
+            {
+                tracing::debug!("verifying state at {l2_block_number}");
+                let gateway_state =
+                    self.get_gateway_state(l2_block_number).await?;
+                let state = self
+                    .get_verified_state(
+                        &gateway_state.block_hash,
+                        Some(prev_block_hash),
+                    )
+                    .await?;
+                prev_block_hash = gateway_state.block_hash;
+                if state.block_number == block_number {
+                    found_state = state;
+                }
+            }
         };
-        Ok(State::new(
-            *block.block_header.block_number.as_ref(),
-            block.block_header.block_hash.0,
-            block.block_header.new_root,
-        ))
+
+        Ok(found_state)
+    }
+
+    async fn get_minimal_l1_range(
+        &self,
+        mut l1_range: L1Range,
+        block_number: i64,
+    ) -> Result<(State, Option<State>)> {
+        // check if the block number is at the start or end of the L1 range
+        if block_number == l1_range.l2_start {
+            let state = self.l1().get_state_on_block(l1_range.l1_start).await?;
+            if let Some(state) = state {
+                return Ok((state, None));
+            }
+            tracing::warn!("State update not found for block {block_number}, using L1 range start state");
+        } else if block_number == l1_range.l2_end {
+            let state = self.l1().get_state_on_block(l1_range.l1_end).await?;
+            if let Some(state) = state {
+                return Ok((state, None));
+            }
+            tracing::warn!("State update not found for block {block_number}, using L1 range end state");
+        }
+
+        // if not, find the smallest L1 range that contains the block number
+        let mut new_l1_ranges: Vec<L1Range> = vec![];
+        let mut is_target_below_range = false; // 'true' means that blocks in received range are above the target block number, so we need to search below
+
+        const MAX_L2_RANGE_SIZE: i64 = 500;
+        while l1_range.l2_end - l1_range.l2_start < MAX_L2_RANGE_SIZE {
+            let mut l1_block_start =
+                approximate_l1_block(&l1_range, block_number)? as u64;
+            tracing::debug!(
+                "L1 range loop, starting from block: {l1_block_start}"
+            );
+            let l1_initial_start = l1_block_start;
+            let mut l1_block_end = l1_range.next_end(l1_block_start);
+            let mut found_sub_range: Option<L1Range> = None;
+            while !is_target_below_range
+                && l1_block_end <= l1_range.l1_end as u64
+            {
+                let states = self
+                    .l1()
+                    .get_l1_state_updates(l1_block_start, l1_block_end)
+                    .await?;
+                tracing::debug!("loop above {l1_block_start}-{l1_block_end}, states: {states:#?}");
+                if !states.is_empty() {
+                    let (sub_range, is_below) = find_l1_sub_range(
+                        l1_range.clone(),
+                        &states,
+                        block_number,
+                        &mut new_l1_ranges,
+                    )?;
+                    found_sub_range = sub_range;
+                    is_target_below_range = is_below;
+                    break;
+                }
+                l1_block_start = l1_block_end + 1;
+                l1_block_end = l1_range.next_end(l1_block_end);
+            }
+            if found_sub_range.is_none() {
+                l1_block_end = l1_initial_start;
+                l1_block_start = l1_range.prev_start(l1_initial_start);
+                // TODO: refactor duplicated code
+                while is_target_below_range
+                    && l1_block_start >= l1_range.l1_start as u64
+                {
+                    let states = self
+                        .l1()
+                        .get_l1_state_updates(l1_block_start, l1_block_end)
+                        .await?;
+                    tracing::debug!("loop below {l1_block_start}-{l1_block_end}, states: {states:#?}");
+                    if !states.is_empty() {
+                        let (sub_range, is_below) = find_l1_sub_range(
+                            l1_range.clone(),
+                            &states,
+                            block_number,
+                            &mut new_l1_ranges,
+                        )?;
+                        found_sub_range = sub_range;
+                        is_target_below_range = is_below;
+                        break;
+                    }
+                    l1_block_end = l1_block_start - 1;
+                    l1_block_start = l1_range.prev_start(l1_block_start);
+                }
+            }
+            l1_range = found_sub_range.ok_or(eyre::eyre!(
+                "State not found for block {block_number}"
+            ))?;
+        }
+
+        // store updated L1 ranges
+        for l1_range in new_l1_ranges {
+            self.storage().write_l1_range(&l1_range).await?;
+        }
+
+        // TODO: use already fetched states if available
+        let start_state = self
+            .l1()
+            .get_state_on_block(l1_range.l1_start)
+            .await?
+            .ok_or(eyre::eyre!("State not found"))?;
+        let end_state: Option<State> = if l1_range.l2_end == l1_range.l2_start {
+            // the exact block was found in L1 commitment, no need to verify the range
+            None
+        } else {
+            self.l1().get_state_on_block(l1_range.l1_end).await?
+        };
+
+        Ok((start_state, end_state))
     }
 }

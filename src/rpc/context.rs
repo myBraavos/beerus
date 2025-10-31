@@ -6,6 +6,7 @@ use crate::r#gen::{
     GetBlockWithReceiptsResult, GetTransactionByBlockIdAndIndexIndex,
     TxnReceiptWithBlockInfo,
 };
+use crate::storage::storage_trait::StorageProviderTrait;
 use crate::{
     client::{Client, State as ClientState},
     exe,
@@ -27,14 +28,14 @@ use crate::{
 
 /// RPC context containing the client and current state
 #[derive(Clone)]
-pub struct Context {
-    pub client: Arc<Client<crate::client::http::Http>>,
+pub struct Context<S: StorageProviderTrait> {
+    pub client: Arc<Client<crate::client::http::Http, S>>,
     pub state: Arc<tokio::sync::RwLock<ClientState>>,
 }
 
-impl Context {
+impl<S: StorageProviderTrait> Context<S> {
     /// Create a new RPC context
-    pub fn new(client: Arc<Client<crate::client::http::Http>>) -> Self {
+    pub fn new(client: Arc<Client<crate::client::http::Http, S>>) -> Self {
         Self {
             client,
             state: Arc::new(tokio::sync::RwLock::new(ClientState::default())),
@@ -54,7 +55,7 @@ impl Context {
 
 #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
-impl gen::Rpc for Context {
+impl<S: StorageProviderTrait> gen::Rpc for Context<S> {
     async fn getProof(
         &self,
         block_id: BlockId,
@@ -116,11 +117,11 @@ impl gen::Rpc for Context {
     async fn call(
         &self,
         request: FunctionCall,
-        _block_id: BlockId, // TODO: use block_id to make a call on specific state
+        block_id: BlockId,
     ) -> Result<Vec<Felt>, jsonrpc::Error> {
         let state = self
             .client
-            .get_state()
+            .get_state_at(block_id)
             .await
             .map_err(|e| jsonrpc::Error::new(-32602, e.to_string()))?;
         let client = gen::client::blocking::Client::new(

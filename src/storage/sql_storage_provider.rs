@@ -1,11 +1,13 @@
 use crate::{
-    client::State,
+    client::{l1_range::L1Range, State},
+    gen::Felt,
     storage::{
         storage_trait::{StorageError, StorageProviderTrait},
         utils::parse_state_row,
     },
 };
 use async_trait::async_trait;
+use eyre::Result;
 use sqlx::{Pool, Postgres};
 
 const INSERT_STATE_QUERY: &str =
@@ -14,17 +16,19 @@ const INSERT_STATE_QUERY: &str =
     ON CONFLICT (block_number)
     DO UPDATE SET block_hash = $2, root = $3";
 
+#[derive(Clone)]
 pub struct SqlStorageProvider {
     pool: Pool<Postgres>,
 }
 
 impl SqlStorageProvider {
-    pub async fn new(database_url: &str) -> Result<Self, StorageError> {
+    pub async fn new(database_url: &str) -> Result<Self> {
         let pool = Pool::<Postgres>::connect(database_url).await?;
         let provider = Self { pool };
         if !provider.table_exists("state").await? {
             provider.create_tables().await?;
-            provider.fill_default_data().await?;
+            provider.fill_default_state_data().await?;
+            provider.fill_default_l1_range_data().await?;
         }
         Ok(provider)
     }
@@ -48,24 +52,36 @@ impl SqlStorageProvider {
         Ok(row.0 > 0)
     }
 
-    async fn create_tables(&self) -> Result<(), StorageError> {
+    async fn create_tables(&self) -> Result<()> {
         let create_state_table_query = "CREATE TABLE IF NOT EXISTS state (
             block_number BIGINT PRIMARY KEY,
             block_hash VARCHAR(66) NOT NULL UNIQUE,
             root VARCHAR(66) NOT NULL
         )";
-        let res =
-            sqlx::query(create_state_table_query).execute(&self.pool).await?;
-        tracing::info!("created state table: {:?}", res);
+        sqlx::query(create_state_table_query).execute(&self.pool).await?;
+
+        let create_l1_range_table_query =
+            "CREATE TABLE IF NOT EXISTS l1_range (
+            l1_start BIGINT PRIMARY KEY,
+            l1_end BIGINT NOT NULL,
+            l2_start BIGINT NOT NULL,
+            l2_end BIGINT NOT NULL
+        )";
+        sqlx::query(create_l1_range_table_query).execute(&self.pool).await?;
+
         Ok(())
     }
 
-    async fn fill_default_data(&self) -> Result<(), StorageError> {
+    async fn fill_default_state_data(&self) -> Result<()> {
         // TODO: should be common code for all providers
-        let default_data = [
-            (1000000_i64, "0x7256dde30ae68f43f3def9ce2a4433dd3de11b630d4f84336891bad8fe4127e", "0x7bd9798e3b03e6dfc12db132d48e4a0dc75202aa6a9b57bc40e3796137bd617"),
+        let default_data: Vec<(i64, &str, &str)> = vec![
+            (1000000, "0x7256dde30ae68f43f3def9ce2a4433dd3de11b630d4f84336891bad8fe4127e", "0x7bd9798e3b03e6dfc12db132d48e4a0dc75202aa6a9b57bc40e3796137bd617"),
+            (1000056, "0x56373a6b0d35130e0f7e9a3461b269317b1836aa66247744335d3d22067dd7f", "0x325ca7903f521b687dcd48736a0a6b32b506149c6d896603187e465ab3f1f74"),
+            (1537726, "0x4a84a6981961b9b47b7bf1da94b7c1d25bebab57b09c22caf171a5aae3c1be8", "0x4013dab22b14596c1f579ecd8fae880af2be8b2a52084c75e70e592c11ceaf"),
             (2000000, "0x55bcdb9f4976886eb8e507dd527f478befda6831863760618ad50bf2e084a81", "0x3f4c29e48bcd9f5a706804ac5bd4adab9029ac5048a23fa9ce7c8df832082e1"),
+            (2318292, "0x6592d1de9e8733706f2f30de1b92ccfb28c879582e153a8ecca8a880d9024b6", "0x31edbc87309c6012f8fc1795fb7527c518a8a9044b5bd0d5df7ae71a923150a"),
             (3000000, "0x1f810eb93546dc8d8ef9ed02b97d047068f16b891dfda97fce0612876ea82df", "0x35451d7ed149e89297555c6d6a65b1aa930544d78c6be66d9add0fde4ad3ef9"),
+            (3262346, "0x58c4122809465bcea8719bc2e5d5acb787dce3eda8e0da9a72a749df99c578", "0x6dbc5b441772a4ac2b1a1b4602c5aeaa4d2404132c627c40ae59ba52d5c4eba"),
         ];
         for (block_number, block_hash, root) in default_data.iter() {
             sqlx::query(INSERT_STATE_QUERY)
@@ -77,24 +93,47 @@ impl SqlStorageProvider {
         }
         Ok(())
     }
+
+    async fn fill_default_l1_range_data(&self) -> Result<()> {
+        // TODO: should be common code for all providers
+        let default_data: Vec<(i64, i64, i64, i64)> = vec![
+            (21451120, 22826732, 1000056, 1537726),
+            (22826732, 23406093, 1537726, 2318292),
+            (23406093, 23689489, 2318292, 3262346),
+        ];
+        for (l1_start, l1_end, l2_start, l2_end) in default_data.iter() {
+            self.write_l1_range(&L1Range::new(
+                *l1_start, *l1_end, *l2_start, *l2_end,
+            ))
+            .await?;
+        }
+        Ok(())
+    }
 }
 
 #[async_trait]
 impl StorageProviderTrait for SqlStorageProvider {
-    async fn read_state(
-        &self,
-        block_number: u64,
-    ) -> Result<State, StorageError> {
+    async fn read_state(&self, block_number: i64) -> Result<State> {
         let query = "SELECT block_number, block_hash, root FROM state WHERE block_number = $1";
         let row: Option<(i64, String, String)> = sqlx::query_as(query)
-            .bind(block_number as i64)
+            .bind(block_number)
             .fetch_optional(&self.pool)
             .await?;
 
         parse_state_row(row)
     }
 
-    async fn read_latest_state(&self) -> Result<State, StorageError> {
+    async fn read_state_by_hash(&self, block_hash: &Felt) -> Result<State> {
+        let query = "SELECT block_number, block_hash, root FROM state WHERE block_hash = $1";
+        let row: Option<(i64, String, String)> = sqlx::query_as(query)
+            .bind(block_hash.as_ref())
+            .fetch_optional(&self.pool)
+            .await?;
+
+        parse_state_row(row)
+    }
+
+    async fn read_latest_state(&self) -> Result<State> {
         let query = "SELECT block_number, block_hash, root FROM state ORDER BY block_number DESC LIMIT 1";
         let row: Option<(i64, String, String)> =
             sqlx::query_as(query).fetch_optional(&self.pool).await?;
@@ -102,11 +141,49 @@ impl StorageProviderTrait for SqlStorageProvider {
         parse_state_row(row)
     }
 
-    async fn write_state(&self, state: &State) -> Result<(), StorageError> {
+    async fn write_state(&self, state: &State) -> Result<()> {
         sqlx::query(INSERT_STATE_QUERY)
             .bind(state.block_number)
             .bind(state.block_hash.as_ref())
             .bind(state.root.as_ref())
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    ///
+    /// L1 range
+    ///
+    async fn read_l1_range(&self, block_number: i64) -> Result<L1Range> {
+        let query = "SELECT l1_start, l1_end, l2_start, l2_end
+            FROM l1_range
+            WHERE l2_start <= $1 AND $1 <= l2_end";
+        let row: Option<(i64, i64, i64, i64)> = sqlx::query_as(query)
+            .bind(block_number)
+            .fetch_optional(&self.pool)
+            .await?;
+
+        match row {
+            Some((l1_start, l1_end, l2_start, l2_end)) => {
+                Ok(L1Range::new(l1_start, l1_end, l2_start, l2_end))
+            }
+            None => {
+                Err(StorageError::NotFound("l1 range not found".to_string())
+                    .into())
+            }
+        }
+    }
+
+    async fn write_l1_range(&self, l1_range: &L1Range) -> Result<()> {
+        let query = "INSERT INTO l1_range (l1_start, l1_end, l2_start, l2_end)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (l1_start)
+            DO UPDATE SET l1_end = $2, l2_start = $3, l2_end = $4";
+        sqlx::query(query)
+            .bind(l1_range.l1_start)
+            .bind(l1_range.l1_end)
+            .bind(l1_range.l2_start)
+            .bind(l1_range.l2_end)
             .execute(&self.pool)
             .await?;
         Ok(())

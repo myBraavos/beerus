@@ -3,7 +3,10 @@ use std::{sync::Arc, time::Duration};
 use beerus::{
     client::{Client, Http},
     config::ServerConfig,
-    storage::sql_storage_provider::SqlStorageProvider,
+    storage::{
+        sql_storage_provider::SqlStorageProvider,
+        storage_trait::StorageProviderTrait,
+    },
 };
 use validator::Validate;
 
@@ -32,7 +35,7 @@ async fn main() -> eyre::Result<()> {
                 };
             let mut tick = tokio::time::interval(period);
             // FIXME: handle all 'unwrap's
-            let l1_state = beerus.l1().get_l1_state().await.unwrap();
+            let l1_state = beerus.l1().get_l1_state().await.unwrap(); // TODO: store in ranges (need to find event with l1 block when state was updated)
             let (from_block, prev_hash) =
                 if l1_state.block_number > latest_stored_block {
                     tracing::info!(
@@ -56,6 +59,7 @@ async fn main() -> eyre::Result<()> {
                 .unwrap();
             loop {
                 tick.tick().await;
+                // TODO: sync L1 state every ~10 minutes, store in ranges, and verify stored L2 state against it
                 match beerus.get_latest_gateway_state().await {
                     Ok(update) => {
                         // sync all intermediate blocks
@@ -78,7 +82,7 @@ async fn main() -> eyre::Result<()> {
                         }
                         if update.block_number != gateway_state.block_number {
                             gateway_state = update.clone();
-                            // FIXME: block may be not available
+                            // FIXME: block may be not available, should retry with delay
                             verified_state = beerus
                                 .get_verified_state(
                                     &gateway_state.block_hash,

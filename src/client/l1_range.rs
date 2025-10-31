@@ -1,0 +1,30 @@
+/// Contains the range of L1 blocks on which the L2 state was updated
+/// Start and End are inclusive
+/// Start and End blocks of L1 and L2 are synchronized,
+///     meaning that l1_start is the block on which l2_start state was updated
+///     and l1_end is the block on which l2_end state was updated
+#[derive(Debug, Clone)]
+pub struct L1Range {
+    pub l1_start: i64,
+    pub l1_end: i64,
+    pub l2_start: i64,
+    pub l2_end: i64,
+    // TODO: offset_start - hint for the L1 range search, indicates confirmed empty blocks
+    // TODO: offset_end
+}
+
+const MAX_BLOCKS_TO_FETCH: u64 = 9; // TODO: move to config
+
+impl L1Range {
+    pub fn new(l1_start: i64, l1_end: i64, l2_start: i64, l2_end: i64) -> Self {
+        Self { l1_start, l1_end, l2_start, l2_end }
+    }
+
+    pub fn next_end(&self, origin: u64) -> u64 {
+        std::cmp::min(origin + MAX_BLOCKS_TO_FETCH, self.l1_end as u64)
+    }
+
+    pub fn prev_start(&self, origin: u64) -> u64 {
+        std::cmp::max(origin - MAX_BLOCKS_TO_FETCH, self.l1_start as u64)
+    }
+}

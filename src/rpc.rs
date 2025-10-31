@@ -30,19 +30,20 @@ use axum::{routing::post, Router};
 use crate::client::Client;
 use crate::rpc::context::Context;
 use crate::rpc::handler::handle_request;
+use crate::storage::storage_trait::StorageProviderTrait;
 
 /// RPC server for handling Starknet JSON-RPC requests
-pub struct Server {
-    client: Arc<Client<crate::client::http::Http>>,
+pub struct Server<S: StorageProviderTrait> {
+    client: Arc<Client<crate::client::http::Http, S>>,
 }
 
-impl Server {
+impl<S: StorageProviderTrait> Server<S> {
     /// Create a new RPC server with the given client
     ///
     /// # Arguments
     ///
     /// * `client` - The Starknet client for handling requests
-    pub fn new(client: Arc<Client<crate::client::http::Http>>) -> Self {
+    pub fn new(client: Arc<Client<crate::client::http::Http, S>>) -> Self {
         Self { client }
     }
 
@@ -52,7 +53,7 @@ impl Server {
     /// and the context set up for request handling.
     pub fn router(self) -> Router {
         let ctx = Context::new(self.client);
-        Router::new().route("/", post(handle_request)).with_state(ctx)
+        Router::new().route("/", post(handle_request::<S>)).with_state(ctx)
     }
 }
 
@@ -65,7 +66,9 @@ impl Server {
 /// # Returns
 ///
 /// Returns `Ok(())` if the server starts successfully, or an error if it fails.
-pub async fn serve(server: Server) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn serve<S: StorageProviderTrait>(
+    server: Server<S>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let app = server.router();
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3030").await?;
     axum::serve(listener, app).await?;
@@ -82,8 +85,8 @@ pub async fn serve(server: Server) -> Result<(), Box<dyn std::error::Error>> {
 /// # Returns
 ///
 /// Returns `Ok(())` if the server starts successfully, or an error if it fails.
-pub async fn serve_on(
-    server: Server,
+pub async fn serve_on<S: StorageProviderTrait>(
+    server: Server<S>,
     addr: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let app = server.router();

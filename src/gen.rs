@@ -189,6 +189,8 @@ pub mod gen {
         Latest,
         #[serde(rename = "pending")]
         Pending,
+        #[serde(rename = "pre_confirmed")]
+        PreConfirmed,
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]

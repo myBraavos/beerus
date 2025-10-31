@@ -3,6 +3,7 @@ use alloy::{
     providers::{Provider, ProviderBuilder},
     rpc::types::Filter,
     sol,
+    sol_types::SolEvent,
 };
 use eyre::Result;
 
@@ -55,11 +56,9 @@ impl L1CoreContract {
         &self,
         start_block: u64,
         end_block: u64,
-    ) -> Result<()> {
+    ) -> Result<Vec<(State, u64)>> {
         let provider =
             ProviderBuilder::new().connect_http(self.rpc_url.parse().unwrap());
-
-        // let contract = StarknetCore::new(CORE_CONTRACT_ADDRESS, &provider);
 
         let filter = Filter::new()
             .address(CORE_CONTRACT_ADDRESS)
@@ -69,9 +68,34 @@ impl L1CoreContract {
 
         let logs = provider.get_logs(&filter).await?;
 
-        // TODO: parse and return response
-        println!("logs: {:?}", logs);
+        let state_updates = logs
+            .into_iter()
+            .map(|log| {
+                let decoded =
+                    StarknetCore::LogStateUpdate::decode_log_data(log.data())?;
+                Ok((
+                    State::new(
+                        decoded.blockNumber.as_i64(),
+                        decoded.blockHash.try_into()?,
+                        decoded.globalRoot.try_into()?,
+                    ),
+                    log.block_number
+                        .ok_or(eyre::eyre!("L1 block number not found"))?,
+                ))
+            })
+            .collect::<Result<Vec<(State, u64)>>>()?;
 
-        Ok(())
+        Ok(state_updates)
+    }
+
+    pub async fn get_state_on_block(
+        &self,
+        block: i64,
+    ) -> Result<Option<State>> {
+        Ok(self
+            .get_l1_state_updates(block as u64, block as u64)
+            .await?
+            .first()
+            .map(|(state, _)| state.clone()))
     }
 }

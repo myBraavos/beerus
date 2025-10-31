@@ -2,7 +2,9 @@ use serde::{Deserialize, Serialize};
 
 use axum::{extract::State, http::StatusCode, Json};
 
-use crate::rpc::context::Context;
+use crate::{
+    rpc::context::Context, storage::storage_trait::StorageProviderTrait,
+};
 
 #[derive(Deserialize, Serialize)]
 #[serde(untagged)]
@@ -21,8 +23,8 @@ pub enum Response {
 }
 
 /// Handle incoming JSON-RPC requests
-pub async fn handle_request(
-    State(ctx): State<Context>,
+pub async fn handle_request<S: StorageProviderTrait>(
+    State(ctx): State<Context<S>>,
     Json(req): Json<Request>,
 ) -> Result<Json<Response>, (StatusCode, String)> {
     let res = match req {
