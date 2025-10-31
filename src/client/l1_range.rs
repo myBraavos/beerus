@@ -9,8 +9,6 @@ pub struct L1Range {
     pub l1_end: i64,
     pub l2_start: i64,
     pub l2_end: i64,
-    // TODO: offset_start - hint for the L1 range search, indicates confirmed empty blocks
-    // TODO: offset_end
 }
 
 const MAX_BLOCKS_TO_FETCH: u64 = 9; // TODO: move to config

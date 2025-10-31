@@ -1180,6 +1180,7 @@ dependencies = [
  "cairo-lang-starknet-classes",
  "eyre",
  "flate2",
+ "futures",
  "gloo-timers",
  "hex",
  "iamgroot",

@@ -202,6 +202,19 @@ pub mod gen {
         pub block_body_with_receipts: BlockBodyWithReceipts,
     }
 
+    impl TryFrom<GetBlockWithReceiptsResult> for BlockWithReceipts {
+        type Error = eyre::Error;
+        fn try_from(
+            value: GetBlockWithReceiptsResult,
+        ) -> Result<Self, Self::Error> {
+            let GetBlockWithReceiptsResult::BlockWithReceipts(block) = value
+            else {
+                eyre::bail!("Pending block received, which is not supported");
+            };
+            Ok(block)
+        }
+    }
+
     #[derive(Clone, Debug, Deserialize, Serialize)]
     pub struct BlockWithTxHashes {
         pub status: BlockStatus,
@@ -1638,6 +1651,18 @@ pub mod gen {
         pub new_root: Felt,
         pub old_root: Felt,
         pub state_diff: StateDiff,
+    }
+
+    impl TryFrom<GetStateUpdateResult> for StateUpdate {
+        type Error = eyre::Error;
+        fn try_from(value: GetStateUpdateResult) -> Result<Self, Self::Error> {
+            let GetStateUpdateResult::StateUpdate(state_update) = value else {
+                eyre::bail!(
+                    "Pending state update received, which is not supported"
+                );
+            };
+            Ok(state_update)
+        }
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]

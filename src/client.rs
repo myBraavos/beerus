@@ -1,23 +1,24 @@
 use eyre::Result;
-use starknet_api::block_hash::block_hash_calculator::{
-    calculate_block_commitments, calculate_block_hash,
-};
+use futures::stream::{StreamExt, TryStreamExt};
 use std::sync::Arc;
 
+use crate::client::block_hash::validate_block_hash;
 use crate::client::l1_range::L1Range;
+use crate::client::rate_limiter::RateLimiter;
 use crate::client::state::GatewayState;
 use crate::client::utils::{approximate_l1_block, find_l1_sub_range};
 use crate::config::Config;
 use crate::eth::core_contract::L1CoreContract;
 use crate::feeder::GatewayClient;
 use crate::gen::client::Client as StarknetClient;
-use crate::gen::BlockHash;
 use crate::gen::{gen, BlockId, BlockTag, Felt, FunctionCall, Rpc};
-use crate::r#gen::BlockNumber;
+use crate::gen::{BlockHash, BlockNumber, BlockWithReceipts, StateUpdate};
 use crate::storage::storage_trait::StorageProviderTrait;
 
+pub mod block_hash;
 pub mod http;
 pub mod l1_range;
+pub mod rate_limiter;
 pub mod state;
 pub mod utils;
 
@@ -147,12 +148,8 @@ impl<
         // start with getting block receipt from the Starknet RPC
         let block_id =
             BlockId::BlockHash { block_hash: BlockHash(block_hash.clone()) };
-        let block = self.starknet.getBlockWithReceipts(block_id).await?;
-        let gen::GetBlockWithReceiptsResult::BlockWithReceipts(block) = block
-        else {
-            eyre::bail!("Pending block received, which is not supported");
-        };
-
+        let block: BlockWithReceipts =
+            self.starknet.getBlockWithReceipts(block_id).await?.try_into()?;
         let parent_block_hash = block.block_header.parent_hash.0.clone();
         if let Some(prev_block_hash) = prev_block_hash {
             if parent_block_hash != prev_block_hash {
@@ -168,45 +165,16 @@ impl<
             eyre::bail!("Unsupported starknet version: {starknet_version}, max supported: {MAX_STARKNET_VERSION}");
         }
 
-        let block_header: starknet_api::block::BlockHeaderWithoutHash =
-            block.block_header.clone().try_into()?;
-
         // then get state update from the Starknet RPC
         let state_update = self
             .starknet
             .getStateUpdate(gen::BlockId::BlockNumber {
                 block_number: block.block_header.block_number.clone(),
             })
-            .await?;
-        let gen::GetStateUpdateResult::StateUpdate(state_update) = state_update
-        else {
-            eyre::bail!("Pending state received, which is not supported");
-        };
-        let transactions_data = block.block_body_with_receipts.transactions.into_iter().map(|transaction_and_receipt| {
-            transaction_and_receipt.try_into().unwrap()
-        }).collect::<Vec<starknet_api::block_hash::block_hash_calculator::TransactionHashingData>>();
+            .await?
+            .try_into()?;
 
-        // then calculate block commitments
-        let block_commitments = calculate_block_commitments(
-            &transactions_data,
-            &state_update.state_diff.try_into()?,
-            block_header.l1_da_mode,
-            &block_header.starknet_version,
-        );
-
-        // then calculate block hash
-        let calculated_block_hash =
-            calculate_block_hash(block_header, block_commitments)?;
-        tracing::debug!(calculated_block_hash=?calculated_block_hash, "calculated block hash");
-
-        // it should match the provided hash
-        if calculated_block_hash.0
-            != starknet_api::hash::StarkHash::from_hex_unchecked(
-                block_hash.as_ref(),
-            )
-        {
-            eyre::bail!("Block hash mismatch: expected {block_hash:?} but got {calculated_block_hash:?}");
-        }
+        validate_block_hash(&block, &state_update, block_hash)?;
 
         let state = State::new(
             *block.block_header.block_number.as_ref(),
@@ -215,6 +183,114 @@ impl<
         );
         self.storage().write_state(&state).await?;
         Ok(state)
+    }
+
+    pub async fn verify_state_range(
+        &self,
+        start_state: State,
+        end_state: State,
+    ) -> Result<()> {
+        // collect block ids
+        tracing::debug!(?start_state, ?end_state, "verify_state_range");
+        const BATCH_SIZE: usize = 10; // TODO: move to config
+                                      // start block is verified on L1 so start after it
+                                      // end block is not inclusive so add 1
+        let block_ids: Vec<BlockId> = (start_state.block_number + 1
+            ..end_state.block_number + 1)
+            .map(|block_number| BlockId::BlockNumber {
+                block_number: BlockNumber::try_new(block_number).unwrap(),
+            })
+            .collect();
+
+        // get blocks data in parallel
+        let rate_limiter = RateLimiter::new(BATCH_SIZE);
+
+        let responses: Vec<(BlockWithReceipts, StateUpdate)> =
+            futures::stream::iter(block_ids)
+                .map(|block_id| {
+                    let starknet = self.starknet.clone();
+                    let rate_limiter = rate_limiter.new_instance();
+                    async move {
+                        rate_limiter.wait().await;
+
+                        tracing::debug!("requesting block {:?}", block_id);
+                        let block: BlockWithReceipts = starknet
+                            .getBlockWithReceipts(block_id.clone())
+                            .await?
+                            .try_into()?;
+                        let state_update: StateUpdate = self
+                            .starknet
+                            .getStateUpdate(block_id)
+                            .await?
+                            .try_into()?;
+                        Ok::<(BlockWithReceipts, StateUpdate), eyre::Error>((
+                            block,
+                            state_update,
+                        ))
+                    }
+                })
+                .buffer_unordered(BATCH_SIZE)
+                .try_collect()
+                .await?;
+
+        let mut results: Vec<BlockWithReceipts> =
+            futures::stream::iter(responses)
+                .map(|(block, state_update)| async move {
+                    tracing::debug!(
+                        "validating block hash for block {}",
+                        block.block_header.block_number.0
+                    );
+                    let block1 = block.clone();
+                    let _ = tokio::task::spawn_blocking(move || {
+                        validate_block_hash(
+                            &block,
+                            &state_update,
+                            &block.block_header.block_hash.0,
+                        )?;
+                        Ok::<(), eyre::Error>(())
+                    })
+                    .await?;
+                    Ok::<BlockWithReceipts, eyre::Error>(block1)
+                })
+                .buffer_unordered(100)
+                .try_collect()
+                .await?;
+
+        results.sort_by_key(|block| block.block_header.block_number.0);
+
+        // verify chain (block.prev_hash == prev_block.hash)
+        let mut prev_block_hash = start_state.block_hash.clone();
+        for block in &results {
+            if block.block_header.parent_hash.0 != prev_block_hash {
+                eyre::bail!("Prev block hash mismatch: expected {prev_block_hash:?} but got {:?}", block.block_header.parent_hash.0.as_ref());
+            }
+            prev_block_hash = block.block_header.block_hash.0.clone();
+        }
+
+        // verify that last block hash matches the end state block hash
+        let Some(last_block) = results.last() else {
+            eyre::bail!("No blocks received");
+        };
+        if last_block.block_header.block_hash.0 != end_state.block_hash {
+            eyre::bail!(
+                "End block hash mismatch: expected {:?} but got {:?}",
+                end_state.block_hash,
+                last_block.block_header.block_hash.0.as_ref()
+            );
+        }
+
+        // store states in storage
+        for block in results {
+            let state = State::new(
+                *block.block_header.block_number.as_ref(),
+                block.block_header.block_hash.0,
+                block.block_header.new_root,
+            );
+            self.storage().write_state(&state).await?;
+        }
+
+        tracing::debug!("range verified");
+        Ok(())
     }
 
     pub async fn get_state_at(&self, block_id: BlockId) -> Result<State> {
@@ -265,8 +341,6 @@ impl<
 
         // verify all blocks in the minimal range received from L1
         self.storage().write_state(&start_state).await?;
-        let mut found_state = start_state.clone();
-        let mut prev_block_hash = start_state.block_hash;
         if let Some(end_state) = end_state {
             // no end_state means that state for exact l2 block found on l1, so we need to verify only if end_state is present
             tracing::debug!(
@@ -274,26 +348,11 @@ impl<
                 start_state.block_number,
                 end_state.block_number
             );
-            for l2_block_number in
-                (start_state.block_number + 1)..=end_state.block_number
-            {
-                tracing::debug!("verifying state at {l2_block_number}");
-                let gateway_state =
-                    self.get_gateway_state(l2_block_number).await?;
-                let state = self
-                    .get_verified_state(
-                        &gateway_state.block_hash,
-                        Some(prev_block_hash),
-                    )
-                    .await?;
-                prev_block_hash = gateway_state.block_hash;
-                if state.block_number == block_number {
-                    found_state = state;
-                }
-            }
+            self.verify_state_range(start_state.clone(), end_state).await?;
         };
 
-        Ok(found_state)
+        // target state was written to storage during verification
+        self.storage().read_state(block_number).await
     }
 
     async fn get_minimal_l1_range(
@@ -321,7 +380,7 @@ impl<
         let mut is_target_below_range = false; // 'true' means that blocks in received range are above the target block number, so we need to search below
 
         const MAX_L2_RANGE_SIZE: i64 = 500;
-        while l1_range.l2_end - l1_range.l2_start < MAX_L2_RANGE_SIZE {
+        while l1_range.l2_end - l1_range.l2_start > MAX_L2_RANGE_SIZE {
             let mut l1_block_start =
                 approximate_l1_block(&l1_range, block_number)? as u64;
             tracing::debug!(
@@ -355,7 +414,6 @@ impl<
             if found_sub_range.is_none() {
                 l1_block_end = l1_initial_start;
                 l1_block_start = l1_range.prev_start(l1_initial_start);
-                // TODO: refactor duplicated code
                 while is_target_below_range
                     && l1_block_start >= l1_range.l1_start as u64
                 {
