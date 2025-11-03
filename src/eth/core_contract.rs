@@ -98,4 +98,13 @@ impl L1CoreContract {
             .first()
             .map(|(state, _)| state.clone()))
     }
+
+    pub async fn get_latest_block_number(&self) -> Result<u64> {
+        let provider =
+            ProviderBuilder::new().connect_http(self.rpc_url.parse().unwrap());
+
+        let block_number = provider.get_block_number().await?;
+
+        Ok(block_number)
+    }
 }

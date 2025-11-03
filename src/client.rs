@@ -462,4 +462,49 @@ impl<
 
         Ok((start_state, end_state))
     }
+
+    pub async fn update_latest_l1_range(&self, l1_state: &State) -> Result<()> {
+        let latest_l1_range = self.storage().read_latest_l1_range().await?;
+        if l1_state.block_number <= latest_l1_range.l2_end {
+            // the state is already in the latest L1 range
+            return Ok(());
+        }
+        tracing::debug!(
+            "updating latest L1 range from {} to {}",
+            latest_l1_range.l2_end,
+            l1_state.block_number
+        );
+
+        // search for event with state update, starting from latest l1 block number and going down
+        let mut end_block = self.l1().get_latest_block_number().await?;
+        let mut l1_range = L1Range::new(
+            latest_l1_range.l1_end,
+            end_block as i64,
+            latest_l1_range.l2_end,
+            l1_state.block_number,
+        );
+        let mut start_block = l1_range.prev_start(end_block);
+
+        while end_block > start_block {
+            let states =
+                self.l1().get_l1_state_updates(start_block, end_block).await?;
+            match states.last() {
+                Some((state, l1_block_number)) => {
+                    l1_range.l1_end = *l1_block_number as i64;
+                    l1_range.l2_end = state.block_number;
+                    break;
+                }
+                None => {
+                    end_block = start_block - 1;
+                    start_block = l1_range.prev_start(start_block);
+                }
+            }
+        }
+
+        // store new L1 range
+        tracing::debug!(?l1_range, "new L1 range");
+        self.storage().write_l1_range(&l1_range).await?;
+
+        Ok(())
+    }
 }

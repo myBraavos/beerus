@@ -8,6 +8,7 @@ use beerus::{
         storage_trait::StorageProviderTrait,
     },
 };
+use tokio::time::Instant;
 use validator::Validate;
 
 #[cfg(not(tarpaulin_include))] // exclude from code-coverage report
@@ -26,6 +27,7 @@ async fn main() -> eyre::Result<()> {
         let period = Duration::from_secs(config.poll_secs);
         tokio::spawn(async move {
             // Find initial state to start syncing from
+
             let latest_stored_state =
                 beerus.storage().read_latest_state().await;
             let (latest_stored_block, latest_stored_hash) =
@@ -34,8 +36,9 @@ async fn main() -> eyre::Result<()> {
                     Err(_) => (0, None),
                 };
             let mut tick = tokio::time::interval(period);
+            let mut l1_sync_check = Instant::now();
             // FIXME: handle all 'unwrap's
-            let l1_state = beerus.l1().get_l1_state().await.unwrap(); // TODO: store in ranges (need to find event with l1 block when state was updated)
+            let l1_state = beerus.l1().get_l1_state().await.unwrap();
             let (from_block, prev_hash) =
                 if l1_state.block_number > latest_stored_block {
                     tracing::info!(
@@ -43,6 +46,7 @@ async fn main() -> eyre::Result<()> {
                         l1_state.block_number
                     );
                     beerus.storage().write_state(&l1_state).await.unwrap();
+                    beerus.update_latest_l1_range(&l1_state).await.unwrap();
                     (l1_state.block_number + 1, Some(l1_state.block_hash))
                 } else {
                     tracing::info!(
@@ -59,7 +63,6 @@ async fn main() -> eyre::Result<()> {
                 .unwrap();
             loop {
                 tick.tick().await;
-                // TODO: sync L1 state every ~10 minutes, store in ranges, and verify stored L2 state against it
                 match beerus.get_latest_gateway_state().await {
                     Ok(update) => {
                         // sync all intermediate blocks
@@ -88,6 +91,25 @@ async fn main() -> eyre::Result<()> {
                                     &gateway_state.block_hash,
                                     Some(verified_state.block_hash),
                                 )
+                                .await
+                                .unwrap();
+                        }
+                        if l1_sync_check.elapsed().as_secs() >= 600 {
+                            // FIXME: move to config
+                            l1_sync_check = Instant::now();
+                            let l1_state =
+                                beerus.l1().get_l1_state().await.unwrap();
+                            let stored_state = beerus
+                                .storage()
+                                .read_state(l1_state.block_number)
+                                .await
+                                .unwrap();
+                            assert_eq!(
+                                stored_state.block_hash, l1_state.block_hash,
+                                "Stored L2 state does not match L1 state"
+                            );
+                            beerus
+                                .update_latest_l1_range(&l1_state)
                                 .await
                                 .unwrap();
                         }

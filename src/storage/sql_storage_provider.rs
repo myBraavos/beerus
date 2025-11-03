@@ -2,8 +2,8 @@ use crate::{
     client::{l1_range::L1Range, State},
     gen::Felt,
     storage::{
-        storage_trait::{StorageError, StorageProviderTrait},
-        utils::parse_state_row,
+        storage_trait::StorageProviderTrait,
+        utils::{parse_l1_range_row, parse_state_row},
     },
 };
 use async_trait::async_trait;
@@ -163,15 +163,15 @@ impl StorageProviderTrait for SqlStorageProvider {
             .fetch_optional(&self.pool)
             .await?;
 
-        match row {
-            Some((l1_start, l1_end, l2_start, l2_end)) => {
-                Ok(L1Range::new(l1_start, l1_end, l2_start, l2_end))
-            }
-            None => {
-                Err(StorageError::NotFound("l1 range not found".to_string())
-                    .into())
-            }
-        }
+        parse_l1_range_row(row)
+    }
+
+    async fn read_latest_l1_range(&self) -> Result<L1Range> {
+        let query = "SELECT l1_start, l1_end, l2_start, l2_end FROM l1_range ORDER BY l1_end DESC LIMIT 1";
+        let row: Option<(i64, i64, i64, i64)> =
+            sqlx::query_as(query).fetch_optional(&self.pool).await?;
+
+        parse_l1_range_row(row)
     }
 
     async fn write_l1_range(&self, l1_range: &L1Range) -> Result<()> {

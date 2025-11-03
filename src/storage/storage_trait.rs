@@ -41,5 +41,6 @@ pub trait StorageProviderTrait: Send + Sync + Clone + 'static {
 
     // l1 range
     async fn read_l1_range(&self, block_number: i64) -> Result<L1Range>;
+    async fn read_latest_l1_range(&self) -> Result<L1Range>;
     async fn write_l1_range(&self, l1_range: &L1Range) -> Result<()>;
 }

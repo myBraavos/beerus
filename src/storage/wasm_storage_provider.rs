@@ -28,6 +28,9 @@ impl StorageProviderTrait for WasmStorageProvider {
     async fn read_l1_range(&self, _block_number: i64) -> Result<L1Range> {
         panic!("Not implemented");
     }
+    async fn read_latest_l1_range(&self) -> Result<L1Range> {
+        panic!("Not implemented");
+    }
     async fn write_l1_range(&self, _l1_range: &L1Range) -> Result<()> {
         panic!("Not implemented");
     }
