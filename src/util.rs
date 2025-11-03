@@ -2,6 +2,8 @@ use bitvec::prelude::{BitSlice, BitVec, Msb0};
 use bitvec::view::BitView;
 use eyre::{eyre, Result};
 use starknet_crypto::Felt as FieldElement;
+use tokio_retry::strategy::ExponentialBackoff;
+use tokio_retry::Retry;
 
 pub fn felt_to_bits(felt: &[u8; 32]) -> BitVec<u8, Msb0> {
     felt.view_bits::<Msb0>()[5..].to_bitvec()
@@ -29,6 +31,18 @@ pub fn felt_from_bits(
     bytes.view_bits_mut::<Msb0>()[5 + mask..].copy_from_bitslice(&bits[mask..]);
 
     Ok(FieldElement::from_bytes_be(&bytes))
+}
+
+pub async fn with_retry<T, F, Fut>(action: F) -> Result<T>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T>>,
+{
+    const RETRIES: usize = 3;
+    const DELAY: u64 = 500; // 0.5 seconds
+    let retry_strategy = ExponentialBackoff::from_millis(DELAY).take(RETRIES);
+
+    Retry::spawn(retry_strategy, action).await
 }
 
 #[cfg(test)]

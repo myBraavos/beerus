@@ -474,7 +474,7 @@ impl<
         Ok((start_state, end_state))
     }
 
-    pub async fn update_latest_l1_range(&self, l1_state: &State) -> Result<()> {
+    pub async fn store_latest_l1_range(&self, l1_state: &State) -> Result<()> {
         let latest_l1_range = self.storage().read_latest_l1_range().await?;
         if l1_state.block_number <= latest_l1_range.l2_end {
             // the state is already in the latest L1 range
