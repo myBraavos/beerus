@@ -86,11 +86,42 @@ async fn get_config() -> eyre::Result<ServerConfig> {
     Ok(config)
 }
 
+/// Prepares the main synchronization loop for the Beerus client.
+///
+/// This async function determines the correct starting point for syncing
+/// by checking the storage for the latest stored L2 state and the latest L1 state.
+/// It then chooses either to continue from the latest stored block, or, if the L1 state is ahead,
+/// updates storage to the L1 state and starts from there. It then fetches the required
+/// Starknet gateway state and verifies the state at the determined block.
+///
+/// # Arguments
+/// * `beerus` - The Beerus client instance used for network and storage access.
+/// * `period` - The duration between sync ticks, controlling periodic sync operations.
+///
+/// # Returns
+/// Returns a tuple containing:
+/// - `tokio::time::Interval`: Timer for driving the sync loop.
+/// - `Instant`: Timestamp representing when the last L1 sync was performed (initially set to now).
+/// - `GatewayState`: The initial Starknet gateway state from which to begin syncing.
+/// - `State`: The corresponding verified Starknet state at the starting block.
+///
+/// # Errors
+/// This function returns an error if there is a failure in fetching required state from storage
+/// or the network.
+//
+/// # Detailed Steps
+/// 1. Try to read the latest state from storage. If it exists, extract the block number and hash;
+///    otherwise, default to block 0 and a missing hash.
+/// 2. Fetch the most recent L1 state from Ethereum.
+/// 3. If the L1 state is ahead of our storage, write it to storage and use it as our starting point.
+/// 4. Else, continue syncing from the latest block in local storage.
+/// 5. Fetch the initial Starknet gateway and verified states to seed the sync loop.
+/// 6. Return the timers and state as a tuple for driving the sync task.
 async fn prepare_main_loop(
     beerus: &Client<Http, SqlStorageProvider>,
     period: Duration,
 ) -> eyre::Result<(tokio::time::Interval, Instant, GatewayState, State)> {
-    // Find initial state to start syncing from
+    // Attempt to find the last synced L2 state in persistent storage.
     let latest_stored_state = beerus.storage().read_latest_state().await;
     let (latest_stored_block, latest_stored_hash) = match latest_stored_state {
         Ok(state) => (state.block_number, Some(state.block_hash)),
@@ -98,6 +129,7 @@ async fn prepare_main_loop(
     };
 
     let l1_state = beerus.l1().get_l1_state().await?;
+    // Decide sync starting point: if L1 head is ahead of L2, start from there, else use last L2.
     let (from_block, prev_hash) = if l1_state.block_number > latest_stored_block
     {
         tracing::info!(
@@ -106,22 +138,50 @@ async fn prepare_main_loop(
         );
         beerus.storage().write_state(&l1_state).await?;
         beerus.store_latest_l1_range(&l1_state).await?;
+        // Start from the block after the latest L1 state.
         (l1_state.block_number + 1, Some(l1_state.block_hash))
     } else {
         tracing::info!("Staring the sync from block {}", latest_stored_block);
+        // Start from the block after the last one stored.
         (latest_stored_block + 1, latest_stored_hash)
     };
+
+    // Fetch Starknet gateway and verified states at the chosen starting block.
     let gateway_state = beerus.get_gateway_state(from_block).await?;
     let verified_state =
         beerus.get_verified_state(&gateway_state.block_hash, prev_hash).await?;
 
-    // sync periods
+    // Prepare interval timer for sync period, and note when the last L1 sync was checked.
     let tick = tokio::time::interval(period);
     let l1_sync_check = Instant::now();
 
     Ok((tick, l1_sync_check, gateway_state, verified_state))
 }
 
+/// Synchronize the local client state with the latest Starknet state and L1 state.
+///
+/// This function performs both L2 and L1 synchronization:
+/// - L2 synchronization: iteratively updates `gateway_state` and `verified_state`
+///   until they are caught up with the most recent Starknet gateway block. Each
+///   intermediate block is sequentially synchronized and verified.
+/// - L1 synchronization: at a given polling interval (`l1_poll_secs`), fetches the latest
+///   L1 state and ensures that the stored L2 state matches the verified L1 state. Updates
+///   the record of the latest stored L1 range accordingly.
+///
+/// # Arguments
+/// * `beerus` - The initialized Beerus client containing all context for storage and network access.
+/// * `gateway_state` - Mutable reference to the last known Starknet gateway state being tracked.
+///
+/// * `verified_state` - Mutable reference to the last known verified Starknet on-chain state.
+///
+/// * `l1_sync_check` - Mutable reference to the timestamp of the last L1 sync check.
+/// * `l1_poll_secs` - Number of seconds between L1 state verification rounds.
+///
+/// # Errors
+/// Returns an `eyre::Error` if any step in the synchronization process fails.
+///
+/// # Panics
+/// Panics if the stored L2 block hash does not match the newly fetched L1 state.
 async fn execute_sync(
     beerus: &Client<Http, SqlStorageProvider>,
     gateway_state: &mut GatewayState,
@@ -129,15 +189,20 @@ async fn execute_sync(
     l1_sync_check: &mut Instant,
     l1_poll_secs: u64,
 ) -> eyre::Result<()> {
+    // Fetch the most recent gateway state from the Starknet feeder
     let update = beerus.get_latest_gateway_state().await?;
-    // sync all intermediate blocks
+
+    // Synchronize all missing blocks between the current gateway_state and the latest update.
     while update.block_number > gateway_state.block_number {
+        // If we're one block behind, use the update directly; otherwise, fetch the next block in sequence.
         *gateway_state =
             if gateway_state.block_number + 1 == update.block_number {
                 update.clone()
             } else {
                 beerus.get_gateway_state(gateway_state.block_number + 1).await?
             };
+        // Attempt to update the verified state for each intermediate block,
+        // retrying if necessary using with_retry for resilience.
         *verified_state = with_retry(|| async {
             beerus
                 .get_verified_state(
@@ -149,16 +214,18 @@ async fn execute_sync(
         .await?;
     }
 
-    // sync L1 state and verify stored L2 state
+    // Sync L1 state and verify stored L2 state
     if l1_sync_check.elapsed().as_secs() >= l1_poll_secs {
         *l1_sync_check = Instant::now();
         let l1_state = beerus.l1().get_l1_state().await?;
         let stored_state =
             beerus.storage().read_state(l1_state.block_number).await?;
+
         assert_eq!(
             stored_state.block_hash, l1_state.block_hash,
             "Stored L2 state does not match L1 state"
         );
+
         beerus.store_latest_l1_range(&l1_state).await?;
     }
     Ok(())
