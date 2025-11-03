@@ -17,9 +17,13 @@ async fn main() -> Result<()> {
         gateway_url: format!("https://feeder.alpha-mainnet.starknet.io"),
         database_url: format!(
             "postgresql://{}:{}@localhost:5432/beerus",
-            std::env::var("POSTGRES_USER").unwrap_or_else(|_| "postgres".to_string()),
-            std::env::var("POSTGRES_PASSWORD").unwrap_or_else(|_| "postgres".to_string()),
+            std::env::var("POSTGRES_USER")
+                .unwrap_or_else(|_| "postgres".to_string()),
+            std::env::var("POSTGRES_PASSWORD")
+                .unwrap_or_else(|_| "postgres".to_string()),
         ),
+        batch_size: 10,
+        l1_range_blocks: 9,
     };
 
     let http = Http::new();
@@ -31,8 +35,5 @@ async fn main() -> Result<()> {
     let state =
         beerus.get_verified_state(&gateway_state.block_hash, None).await?;
     tracing::info!("synced: {state:#?}");
-    let state = beerus.storage().read_latest_state().await?;
-    tracing::info!("read: {state:#?}");
-
     Ok(())
 }

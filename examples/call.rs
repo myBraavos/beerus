@@ -18,6 +18,8 @@ async fn main() -> Result<()> {
         database_url: format!(
             "postgresql://postgres:postgres@localhost:5432/beerus"
         ),
+        batch_size: 10,
+        l1_range_blocks: 9,
     };
 
     let http = Http::new();

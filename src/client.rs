@@ -43,6 +43,7 @@ pub struct Client<
     gateway: GatewayClient,
     storage: Arc<S>,
     l1_core_contract: L1CoreContract,
+    config: Config,
 }
 
 impl<
@@ -68,7 +69,14 @@ impl<
         }
         let gateway = GatewayClient::new(&config.gateway_url)?;
         let l1_core_contract = L1CoreContract::new(&config.eth_rpc);
-        Ok(Self { starknet, http, gateway, storage, l1_core_contract })
+        Ok(Self {
+            starknet,
+            http,
+            gateway,
+            storage,
+            l1_core_contract,
+            config: config.clone(),
+        })
     }
 
     /// Get the underlying Starknet client
@@ -192,9 +200,6 @@ impl<
     ) -> Result<()> {
         // collect block ids
         tracing::debug!(?start_state, ?end_state, "verify_state_range");
-        const BATCH_SIZE: usize = 10; // TODO: move to config
-                                      // start block is verified on L1 so start after it
-                                      // end block is not inclusive so add 1
         let block_ids: Vec<BlockId> = (start_state.block_number + 1
             ..end_state.block_number + 1)
             .map(|block_number| BlockId::BlockNumber {
@@ -203,7 +208,7 @@ impl<
             .collect();
 
         // get blocks data in parallel
-        let rate_limiter = RateLimiter::new(BATCH_SIZE);
+        let rate_limiter = RateLimiter::new(self.config.batch_size);
 
         let responses: Vec<(BlockWithReceipts, StateUpdate)> =
             futures::stream::iter(block_ids)
@@ -229,7 +234,7 @@ impl<
                         ))
                     }
                 })
-                .buffer_unordered(BATCH_SIZE)
+                .buffer_unordered(self.config.batch_size)
                 .try_collect()
                 .await?;
 
@@ -387,7 +392,8 @@ impl<
                 "L1 range loop, starting from block: {l1_block_start}"
             );
             let l1_initial_start = l1_block_start;
-            let mut l1_block_end = l1_range.next_end(l1_block_start);
+            let mut l1_block_end =
+                l1_range.next_end(l1_block_start, self.config.l1_range_blocks);
             let mut found_sub_range: Option<L1Range> = None;
             while !is_target_below_range
                 && l1_block_end <= l1_range.l1_end as u64
@@ -409,11 +415,13 @@ impl<
                     break;
                 }
                 l1_block_start = l1_block_end + 1;
-                l1_block_end = l1_range.next_end(l1_block_end);
+                l1_block_end = l1_range
+                    .next_end(l1_block_end, self.config.l1_range_blocks);
             }
             if found_sub_range.is_none() {
                 l1_block_end = l1_initial_start;
-                l1_block_start = l1_range.prev_start(l1_initial_start);
+                l1_block_start = l1_range
+                    .prev_start(l1_initial_start, self.config.l1_range_blocks);
                 while is_target_below_range
                     && l1_block_start >= l1_range.l1_start as u64
                 {
@@ -434,7 +442,10 @@ impl<
                         break;
                     }
                     l1_block_end = l1_block_start - 1;
-                    l1_block_start = l1_range.prev_start(l1_block_start);
+                    l1_block_start = l1_range.prev_start(
+                        l1_block_start,
+                        self.config.l1_range_blocks,
+                    );
                 }
             }
             l1_range = found_sub_range.ok_or(eyre::eyre!(
@@ -483,7 +494,8 @@ impl<
             latest_l1_range.l2_end,
             l1_state.block_number,
         );
-        let mut start_block = l1_range.prev_start(end_block);
+        let mut start_block =
+            l1_range.prev_start(end_block, self.config.l1_range_blocks);
 
         while end_block > start_block {
             let states =
@@ -496,7 +508,8 @@ impl<
                 }
                 None => {
                     end_block = start_block - 1;
-                    start_block = l1_range.prev_start(start_block);
+                    start_block = l1_range
+                        .prev_start(start_block, self.config.l1_range_blocks);
                 }
             }
         }

@@ -94,8 +94,9 @@ async fn main() -> eyre::Result<()> {
                                 .await
                                 .unwrap();
                         }
-                        if l1_sync_check.elapsed().as_secs() >= 600 {
-                            // FIXME: move to config
+                        if l1_sync_check.elapsed().as_secs()
+                            >= config.l1_poll_secs
+                        {
                             l1_sync_check = Instant::now();
                             let l1_state =
                                 beerus.l1().get_l1_state().await.unwrap();

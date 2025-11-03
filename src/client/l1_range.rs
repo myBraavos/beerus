@@ -11,18 +11,16 @@ pub struct L1Range {
     pub l2_end: i64,
 }
 
-const MAX_BLOCKS_TO_FETCH: u64 = 9; // TODO: move to config
-
 impl L1Range {
     pub fn new(l1_start: i64, l1_end: i64, l2_start: i64, l2_end: i64) -> Self {
         Self { l1_start, l1_end, l2_start, l2_end }
     }
 
-    pub fn next_end(&self, origin: u64) -> u64 {
-        std::cmp::min(origin + MAX_BLOCKS_TO_FETCH, self.l1_end as u64)
+    pub fn next_end(&self, origin: u64, l1_range_blocks: u64) -> u64 {
+        std::cmp::min(origin + l1_range_blocks, self.l1_end as u64)
     }
 
-    pub fn prev_start(&self, origin: u64) -> u64 {
-        std::cmp::max(origin - MAX_BLOCKS_TO_FETCH, self.l1_start as u64)
+    pub fn prev_start(&self, origin: u64, l1_range_blocks: u64) -> u64 {
+        std::cmp::max(origin - l1_range_blocks, self.l1_start as u64)
     }
 }

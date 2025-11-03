@@ -8,9 +8,18 @@ use validator::Validate;
 /// Configuration constants
 mod constants {
     pub const DEFAULT_POLL_SECS: u64 = 30;
+    pub const DEFAULT_L1_POLL_SECS: u64 = 600; // 10 minutes
     pub const DEFAULT_RPC_PORT: u16 = 3030;
     pub const MIN_POLL_SECS: u64 = 1;
     pub const MAX_POLL_SECS: u64 = 3600;
+    pub const MIN_L1_POLL_SECS: u64 = 30;
+    pub const MAX_L1_POLL_SECS: u64 = 36000; // 10 hours
+    pub const MIN_BATCH_SIZE: usize = 1;
+    pub const MAX_BATCH_SIZE: usize = 1000;
+    pub const DEFAULT_BATCH_SIZE: usize = 10;
+    pub const MIN_L1_RANGE_BLOCKS: u64 = 1;
+    pub const MAX_L1_RANGE_BLOCKS: u64 = 100000;
+    pub const DEFAULT_L1_RANGE_BLOCKS: u64 = 9;
 }
 
 /// Environment variable names
@@ -20,7 +29,10 @@ mod env_vars {
     pub const GATEWAY_URL: &str = "GATEWAY_URL";
     pub const DATABASE_URL: &str = "DATABASE_URL";
     pub const POLL_SECS: &str = "POLL_SECS";
+    pub const L1_POLL_SECS: &str = "L1_POLL_SECS";
     pub const RPC_ADDR: &str = "RPC_ADDR";
+    pub const BATCH_SIZE: &str = "BATCH_SIZE";
+    pub const L1_RANGE_BLOCKS: &str = "L1_RANGE_BLOCKS";
 }
 
 /// Server configuration containing both client and server settings
@@ -34,6 +46,12 @@ pub struct ServerConfig {
         max = "constants::MAX_POLL_SECS"
     ))]
     pub poll_secs: u64,
+    #[serde(default = "default_l1_poll_secs")]
+    #[validate(range(
+        min = "constants::MIN_L1_POLL_SECS",
+        max = "constants::MAX_L1_POLL_SECS"
+    ))]
+    pub l1_poll_secs: u64,
     #[serde(default = "default_rpc_addr")]
     pub rpc_addr: SocketAddr,
 }
@@ -47,6 +65,18 @@ pub struct Config {
     pub starknet_rpc: String,
     #[validate(url)]
     pub gateway_url: String,
+    #[serde(default = "default_batch_size")]
+    #[validate(range(
+        min = "constants::MIN_BATCH_SIZE",
+        max = "constants::MAX_BATCH_SIZE"
+    ))]
+    pub batch_size: usize,
+    #[serde(default = "default_l1_range_blocks")]
+    #[validate(range(
+        min = "constants::MIN_L1_RANGE_BLOCKS",
+        max = "constants::MAX_L1_RANGE_BLOCKS"
+    ))]
+    pub l1_range_blocks: u64,
     #[cfg(not(target_arch = "wasm32"))]
     #[validate(url)]
     pub database_url: String,
@@ -56,6 +86,7 @@ impl ServerConfig {
     /// Create configuration from environment variables
     pub fn from_env() -> Result<Self> {
         let poll_secs = Self::parse_poll_secs_from_env()?;
+        let l1_poll_secs = Self::parse_l1_poll_secs_from_env()?;
         let rpc_addr = Self::parse_rpc_addr_from_env()?;
 
         Ok(Self {
@@ -63,10 +94,13 @@ impl ServerConfig {
                 eth_rpc: Self::parse_eth_rpc_from_env()?,
                 starknet_rpc: Self::parse_starknet_rpc_from_env()?,
                 gateway_url: Self::parse_gateway_url_from_env()?,
+                batch_size: Self::parse_batch_size_from_env()?,
+                l1_range_blocks: Self::parse_l1_range_blocks_from_env()?,
                 #[cfg(not(target_arch = "wasm32"))]
                 database_url: Self::parse_database_url_from_env()?,
             },
             poll_secs,
+            l1_poll_secs,
             rpc_addr,
         })
     }
@@ -83,23 +117,42 @@ impl ServerConfig {
 
     /// Parse poll seconds from environment variable
     fn parse_poll_secs_from_env() -> Result<u64> {
-        match std::env::var(env_vars::POLL_SECS) {
-            Ok(value) => {
-                let poll_secs =
-                    value.parse().context("Invalid POLL_SECS value")?;
-                if !(constants::MIN_POLL_SECS..=constants::MAX_POLL_SECS)
-                    .contains(&poll_secs)
-                {
-                    eyre::bail!(
-                        "POLL_SECS must be between {} and {}",
-                        constants::MIN_POLL_SECS,
-                        constants::MAX_POLL_SECS
-                    );
-                }
-                Ok(poll_secs)
-            }
-            Err(_) => Ok(constants::DEFAULT_POLL_SECS),
-        }
+        parse_env_range(
+            env_vars::POLL_SECS,
+            constants::MIN_POLL_SECS,
+            constants::MAX_POLL_SECS,
+            constants::DEFAULT_POLL_SECS,
+        )
+    }
+
+    /// Parse L1 poll seconds from environment variable
+    fn parse_l1_poll_secs_from_env() -> Result<u64> {
+        parse_env_range(
+            env_vars::L1_POLL_SECS,
+            constants::MIN_L1_POLL_SECS,
+            constants::MAX_L1_POLL_SECS,
+            constants::DEFAULT_L1_POLL_SECS,
+        )
+    }
+
+    /// Parse batch size from environment variable
+    fn parse_batch_size_from_env() -> Result<usize> {
+        parse_env_range(
+            env_vars::BATCH_SIZE,
+            constants::MIN_BATCH_SIZE,
+            constants::MAX_BATCH_SIZE,
+            constants::DEFAULT_BATCH_SIZE,
+        )
+    }
+
+    /// Parse L1 range blocks from environment variable
+    fn parse_l1_range_blocks_from_env() -> Result<u64> {
+        parse_env_range(
+            env_vars::L1_RANGE_BLOCKS,
+            constants::MIN_L1_RANGE_BLOCKS,
+            constants::MAX_L1_RANGE_BLOCKS,
+            constants::DEFAULT_L1_RANGE_BLOCKS,
+        )
     }
 
     /// Parse RPC address from environment variable
@@ -141,9 +194,44 @@ fn default_poll_secs() -> u64 {
     constants::DEFAULT_POLL_SECS
 }
 
+/// Default L1 poll interval in seconds
+fn default_l1_poll_secs() -> u64 {
+    constants::DEFAULT_L1_POLL_SECS
+}
+
+/// Default batch size
+fn default_batch_size() -> usize {
+    constants::DEFAULT_BATCH_SIZE
+}
+
+/// Default L1 range blocks
+fn default_l1_range_blocks() -> u64 {
+    constants::DEFAULT_L1_RANGE_BLOCKS
+}
+
 /// Default RPC server address
 fn default_rpc_addr() -> SocketAddr {
     SocketAddr::from(([0, 0, 0, 0], constants::DEFAULT_RPC_PORT))
+}
+
+fn parse_env_range<T: std::str::FromStr + PartialOrd + std::fmt::Display>(
+    env_var: &str,
+    min: T,
+    max: T,
+    default: T,
+) -> Result<T> {
+    match std::env::var(env_var) {
+        Ok(value) => {
+            let parsed_value = value.parse().map_err(|_| {
+                eyre::eyre!("Invalid {} value: {}", env_var, value)
+            })?;
+            if !(&min..=&max).contains(&&parsed_value) {
+                eyre::bail!("{} must be between {} and {}", env_var, min, max);
+            }
+            Ok(parsed_value)
+        }
+        Err(_) => Ok(default),
+    }
 }
 
 #[cfg(test)]
@@ -157,10 +245,13 @@ mod tests {
                 starknet_rpc: "invalid-url".to_string(),
                 eth_rpc: "".to_string(),
                 gateway_url: "".to_string(),
+                batch_size: 10,
+                l1_range_blocks: 9,
                 #[cfg(not(target_arch = "wasm32"))]
                 database_url: "".to_string(),
             },
             poll_secs: 300,
+            l1_poll_secs: 600,
             rpc_addr: SocketAddr::from(([0, 0, 0, 0], 3030)),
         };
 
@@ -176,10 +267,13 @@ mod tests {
                 starknet_rpc: "https://example.com".to_string(),
                 eth_rpc: "".to_string(),
                 gateway_url: "".to_string(),
+                batch_size: 10,
+                l1_range_blocks: 9,
                 #[cfg(not(target_arch = "wasm32"))]
                 database_url: "".to_string(),
             },
             poll_secs: 9999, // Too high
+            l1_poll_secs: 600,
             rpc_addr: SocketAddr::from(([127, 0, 0, 1], 3030)),
         };
 
@@ -195,10 +289,13 @@ mod tests {
                 starknet_rpc: "https://example.com".to_string(),
                 eth_rpc: "".to_string(),
                 gateway_url: "".to_string(),
+                batch_size: 10,
+                l1_range_blocks: 9,
                 #[cfg(not(target_arch = "wasm32"))]
                 database_url: "".to_string(),
             },
             poll_secs: 300,
+            l1_poll_secs: 600,
             rpc_addr: SocketAddr::from(([127, 0, 0, 1], 3030)),
         };
 
