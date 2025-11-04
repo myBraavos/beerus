@@ -1956,7 +1956,7 @@ dependencies = [
 [[package]]
 name = "cairo-vm"
 version = "1.0.2"
-source = "git+https://github.com/lambdaclass/cairo-vm?tag=v1.0.2#118f794af617482fc63cc520dcbc9f63fb9f6fd1"
+source = "git+https://github.com/Serhii-Braavos/cairo-vm.git?branch=v1.0.2-patch#530550b2aeff49bc39478d8994712446a8a9a1a8"
 dependencies = [
  "anyhow",
  "bincode",
@@ -2069,7 +2069,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "117725a109d387c937a1533ce01b450cbde6b88abceea8473c4d7a85853cda3c"
 dependencies = [
  "lazy_static",
- "windows-sys 0.59.0",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
@@ -5675,6 +5675,7 @@ checksum = "56199f7ddabf13fe5074ce809e7d3f42b42ae711800501b5b16ea82ad029c39d"
 [[package]]
 name = "size-of"
 version = "0.1.5"
+source = "git+https://github.com/Serhii-Braavos/size-of.git?branch=v0.1.5-patch#82128a2297480c633a16f2dfcebe64827d63a030"
 
 [[package]]
 name = "slab"
@@ -7351,15 +7352,6 @@ name = "windows-sys"
 version = "0.52.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "282be5f36a8ce781fad8c8ae18fa3f9beff57ec1b52cb3de0789201425d9a33d"
-dependencies = [
- "windows-targets 0.52.6",
-]
-
-[[package]]
-name = "windows-sys"
-version = "0.59.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e38bc4d79ed67fd075bcc251a1c39b32a1776bbe92e5bef1f0bf1f8c531853b"
 dependencies = [
  "windows-targets 0.52.6",
 ]

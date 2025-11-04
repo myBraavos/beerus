@@ -1,4 +1,4 @@
-FROM rust:bullseye as builder
+FROM rust:1.90-bullseye as builder
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y libssl-dev
 WORKDIR /beerus
 COPY . .
@@ -7,7 +7,7 @@ RUN strip target/release/beerus
 
 FROM debian:bullseye-slim
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates
-COPY --chown=beerus:beerus --from=builder /beerus/target/release/beerus /usr/local/bin/
+COPY --from=builder /beerus/target/release/beerus /usr/local/bin/
 
 EXPOSE 3030
 

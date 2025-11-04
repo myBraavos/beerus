@@ -1,3 +1,16 @@
+# Build instruction
+
+Create `.env` based on `.env-example`.
+
+Run `docker-compose up --build`
+
+You will see `Started state range verification ...`. It will take some time to verify blocks starting from the latest L1 block.
+
+When it finished, you'll see `Starting the sync from block ...`, at this point you can use light client as rpc `localhost:3030`.
+
+
+TODO: update the rest of readme
+
 ### UPDATE: 2025-02-07
 
 *Hey everyone,*

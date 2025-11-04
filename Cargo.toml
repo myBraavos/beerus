@@ -75,8 +75,8 @@ web-time = "1.1.0"
 wiremock = "0.6.2"
 
 [patch.crates-io]
-size-of = { path = "patches/size-of" }
-cairo-vm = { git = "https://github.com/lambdaclass/cairo-vm", tag = "v1.0.2" }
+size-of = { git = "https://github.com/Serhii-Braavos/size-of.git", branch = "v0.1.5-patch" }
+cairo-vm = { git = "https://github.com/Serhii-Braavos/cairo-vm.git", branch = "v1.0.2-patch" }
 cairo-lang-starknet-classes = { git = "https://github.com/starkware-libs/cairo.git", tag = "v2.10.0" }
 cairo-lang-sierra = { git = "https://github.com/starkware-libs/cairo.git", tag = "v2.10.0" }
 cairo-lang-utils = { git = "https://github.com/starkware-libs/cairo.git", tag = "v2.10.0" }
@@ -102,7 +102,6 @@ cairo-lang-semantic = { git = "https://github.com/starkware-libs/cairo.git", tag
 cairo-lang-syntax = { git = "https://github.com/starkware-libs/cairo.git", tag = "v2.10.0" }
 cairo-lang-test-utils = { git = "https://github.com/starkware-libs/cairo.git", tag = "v2.10.0" }
 cairo-lang-eq-solver = { git = "https://github.com/starkware-libs/cairo.git", tag = "v2.10.0" }
-
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(test)', 'cfg(tarpaulin_include)'] }
