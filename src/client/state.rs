@@ -43,3 +43,13 @@ impl Default for State {
         }
     }
 }
+
+impl From<GatewayState> for State {
+    fn from(gateway_state: GatewayState) -> Self {
+        Self {
+            block_number: gateway_state.block_number,
+            block_hash: gateway_state.block_hash,
+            root: Felt::try_new("0x0").unwrap(),
+        }
+    }
+}

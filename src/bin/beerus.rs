@@ -3,6 +3,7 @@ use std::{sync::Arc, time::Duration};
 use beerus::{
     client::{state::GatewayState, Client, Http, State},
     config::ServerConfig,
+    gen::{BlockId, BlockNumber},
     storage::{
         sql_storage_provider::SqlStorageProvider,
         storage_trait::StorageProviderTrait,
@@ -123,33 +124,38 @@ async fn prepare_main_loop(
 ) -> eyre::Result<(tokio::time::Interval, Instant, GatewayState, State)> {
     // Attempt to find the last synced L2 state in persistent storage.
     let latest_stored_state = beerus.storage().read_latest_state().await;
-    let (latest_stored_block, latest_stored_hash) = match latest_stored_state {
-        Ok(state) => (state.block_number, Some(state.block_hash)),
-        Err(_) => (0, None),
+    let latest_stored_block = match &latest_stored_state {
+        Ok(state) => state.block_number,
+        Err(_) => 0,
     };
 
     let l1_state = beerus.l1().get_l1_state().await?;
     // Decide sync starting point: if L1 head is ahead of L2, start from there, else use last L2.
-    let (from_block, prev_hash) = if l1_state.block_number > latest_stored_block
-    {
-        tracing::info!(
-            "Staring the sync from L1 block {}",
-            l1_state.block_number
-        );
+    let mut verified_state = if l1_state.block_number > latest_stored_block {
         beerus.storage().write_state(&l1_state).await?;
         beerus.store_latest_l1_range(&l1_state).await?;
-        // Start from the block after the latest L1 state.
-        (l1_state.block_number + 1, Some(l1_state.block_hash))
+        l1_state
     } else {
-        tracing::info!("Staring the sync from block {}", latest_stored_block);
-        // Start from the block after the last one stored.
-        (latest_stored_block + 1, latest_stored_hash)
+        latest_stored_state?
     };
 
-    // Fetch Starknet gateway and verified states at the chosen starting block.
-    let gateway_state = beerus.get_gateway_state(from_block).await?;
-    let verified_state =
-        beerus.get_verified_state(&gateway_state.block_hash, prev_hash).await?;
+    // Sync missing blocks
+    let gateway_state = beerus.get_latest_gateway_state().await?;
+    if gateway_state.block_number > verified_state.block_number {
+        beerus
+            .verify_state_range(
+                verified_state.clone(),
+                gateway_state.clone().into(),
+            )
+            .await?;
+        verified_state = beerus
+            .get_state_at(BlockId::BlockNumber {
+                block_number: BlockNumber::try_new(gateway_state.block_number)
+                    .unwrap(),
+            })
+            .await?;
+    }
+    tracing::info!("Starting the sync from block {}", verified_state.block_number);
 
     // Prepare interval timer for sync period, and note when the last L1 sync was checked.
     let tick = tokio::time::interval(period);

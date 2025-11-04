@@ -14,6 +14,7 @@ use crate::gen::client::Client as StarknetClient;
 use crate::gen::{gen, BlockId, BlockTag, Felt, FunctionCall, Rpc};
 use crate::gen::{BlockHash, BlockNumber, BlockWithReceipts, StateUpdate};
 use crate::storage::storage_trait::StorageProviderTrait;
+use crate::util::with_retry;
 
 pub mod block_hash;
 pub mod http;
@@ -169,7 +170,8 @@ impl<
         prev_block_hash: Option<Felt>,
     ) -> Result<State> {
         // Step 1: Retrieve block with receipts from the Starknet RPC using the given block hash.
-        let block_id = BlockId::BlockHash { block_hash: BlockHash(block_hash.clone()) };
+        let block_id =
+            BlockId::BlockHash { block_hash: BlockHash(block_hash.clone()) };
         let block: BlockWithReceipts =
             self.starknet.getBlockWithReceipts(block_id).await?.try_into()?;
 
@@ -182,8 +184,10 @@ impl<
         }
 
         // Step 3: Ensure Starknet protocol version isn't above max supported.
-        let starknet_version = semver::Version::parse(&block.block_header.starknet_version)?;
-        let max_starknet_version = semver::Version::parse(MAX_STARKNET_VERSION)?;
+        let starknet_version =
+            semver::Version::parse(&block.block_header.starknet_version)?;
+        let max_starknet_version =
+            semver::Version::parse(MAX_STARKNET_VERSION)?;
         if starknet_version > max_starknet_version {
             eyre::bail!("Unsupported starknet version: {starknet_version}, max supported: {MAX_STARKNET_VERSION}");
         }
@@ -229,7 +233,11 @@ impl<
         end_state: State,
     ) -> Result<()> {
         // Step 1: Collect all block IDs to verify (exclusive range)
-        tracing::debug!(?start_state, ?end_state, "verify_state_range");
+        tracing::info!(
+            ?start_state,
+            ?end_state,
+            "Started state range verification"
+        );
         let block_ids: Vec<BlockId> = (start_state.block_number + 1
             ..end_state.block_number + 1)
             .map(|block_number| BlockId::BlockNumber {
@@ -251,20 +259,20 @@ impl<
 
                         tracing::debug!("requesting block {:?}", block_id);
 
-                        // Fetch block with receipts
-                        let block: BlockWithReceipts = starknet
-                            .getBlockWithReceipts(block_id.clone())
-                            .await?
-                            .try_into()?;
-                        // Fetch state update for the same block
-                        let state_update: StateUpdate = starknet
-                            .getStateUpdate(block_id)
-                            .await?
-                            .try_into()?;
-                        Ok::<(BlockWithReceipts, StateUpdate), eyre::Error>((
-                            block,
-                            state_update,
-                        ))
+                        with_retry(|| async {
+                            // Fetch block with receipts
+                            let block: BlockWithReceipts = starknet
+                                .getBlockWithReceipts(block_id.clone())
+                                .await?
+                                .try_into()?;
+                            // Fetch state update for the same block
+                            let state_update: StateUpdate = starknet
+                                .getStateUpdate(block_id.clone())
+                                .await?
+                                .try_into()?;
+                            Ok((block, state_update))
+                        })
+                        .await
                     }
                 })
                 .buffer_unordered(self.config.batch_size)

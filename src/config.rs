@@ -7,7 +7,7 @@ use validator::Validate;
 
 /// Configuration constants
 mod constants {
-    pub const DEFAULT_POLL_SECS: u64 = 30;
+    pub const DEFAULT_POLL_SECS: u64 = 10;
     pub const DEFAULT_L1_POLL_SECS: u64 = 600; // 10 minutes
     pub const DEFAULT_RPC_PORT: u16 = 3030;
     pub const MIN_POLL_SECS: u64 = 1;

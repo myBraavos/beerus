@@ -128,7 +128,7 @@ impl<T: gen::client::blocking::HttpClient> StateReader for StateProxy<T> {
         contract_address: ContractAddress,
         storage_key: StarknetStorageKey,
     ) -> StateResult<StarkFelt> {
-        tracing::info!(?contract_address, ?storage_key, "get_storage_at");
+        tracing::debug!(?contract_address, ?storage_key, "get_storage_at");
 
         let felt: gen::Felt = gen::Felt::try_from(contract_address.0.key())?;
         let address = gen::Address(felt);
@@ -144,10 +144,10 @@ impl<T: gen::client::blocking::HttpClient> StateReader for StateProxy<T> {
             .client
             .getStorageAt(address.clone(), key.clone(), block_id.clone())
             .map_err(Into::<Error>::into)?;
-        tracing::info!(?address, ?key, value=?ret, "get_storage_at");
+        tracing::debug!(?address, ?key, value=?ret, "get_storage_at");
 
         if ret.as_ref() == "0x0" {
-            tracing::info!("get_storage_at: skipping proof for zero value");
+            tracing::debug!("get_storage_at: skipping proof for zero value");
             return Ok(StarkFelt::try_from(ret)?);
         }
 
@@ -155,7 +155,7 @@ impl<T: gen::client::blocking::HttpClient> StateReader for StateProxy<T> {
             .client
             .getProof(block_id, address.clone(), vec![key.clone()])
             .map_err(Into::<Error>::into)?;
-        tracing::info!("get_storage_at: proof received");
+        tracing::debug!("get_storage_at: proof received");
 
         let global_root = self.state.root.clone();
         let value = ret.clone();
@@ -165,7 +165,7 @@ impl<T: gen::client::blocking::HttpClient> StateReader for StateProxy<T> {
                     "Failed to verify merkle proof: {e:?}"
                 ))
             })?;
-        tracing::info!("get_storage_at: proof verified");
+        tracing::debug!("get_storage_at: proof verified");
 
         Ok(StarkFelt::try_from(ret)?)
     }
@@ -174,7 +174,7 @@ impl<T: gen::client::blocking::HttpClient> StateReader for StateProxy<T> {
         &self,
         contract_address: ContractAddress,
     ) -> StateResult<Nonce> {
-        tracing::info!(?contract_address, "get_nonce_at");
+        tracing::debug!(?contract_address, "get_nonce_at");
 
         let block_id = gen::BlockId::BlockHash {
             block_hash: gen::BlockHash(self.state.block_hash.clone()),
@@ -195,7 +195,7 @@ impl<T: gen::client::blocking::HttpClient> StateReader for StateProxy<T> {
         &self,
         contract_address: ContractAddress,
     ) -> StateResult<ClassHash> {
-        tracing::info!(?contract_address, "get_class_hash_at");
+        tracing::debug!(?contract_address, "get_class_hash_at");
 
         let block_id = gen::BlockId::BlockHash {
             block_hash: gen::BlockHash(self.state.block_hash.clone()),
@@ -217,7 +217,7 @@ impl<T: gen::client::blocking::HttpClient> StateReader for StateProxy<T> {
         class_hash: ClassHash,
     ) -> Result<RunnableCompiledClass, blockifier::state::errors::StateError>
     {
-        tracing::info!(?class_hash, "get_compiled_class");
+        tracing::debug!(?class_hash, "get_compiled_class");
 
         let block_id = gen::BlockId::BlockHash {
             block_hash: gen::BlockHash(self.state.block_hash.clone()),
@@ -237,7 +237,7 @@ impl<T: gen::client::blocking::HttpClient> StateReader for StateProxy<T> {
         &self,
         class_hash: ClassHash,
     ) -> StateResult<CompiledClassHash> {
-        tracing::info!(?class_hash, "get_compiled_class_hash");
+        tracing::debug!(?class_hash, "get_compiled_class_hash");
         Err(blockifier::state::errors::StateError::UndeclaredClassHash(
             class_hash,
         ))
@@ -251,7 +251,7 @@ impl<T: gen::client::blocking::HttpClient> BlockifierState for StateProxy<T> {
         key: StarknetStorageKey,
         value: StarkFelt,
     ) -> StateResult<()> {
-        tracing::info!(?contract_address, ?key, ?value, "set_storage_at");
+        tracing::debug!(?contract_address, ?key, ?value, "set_storage_at");
         Ok(())
     }
 
@@ -259,7 +259,7 @@ impl<T: gen::client::blocking::HttpClient> BlockifierState for StateProxy<T> {
         &mut self,
         contract_address: ContractAddress,
     ) -> StateResult<()> {
-        tracing::info!(?contract_address, "increment_nonce");
+        tracing::debug!(?contract_address, "increment_nonce");
         Ok(())
     }
 
@@ -268,7 +268,7 @@ impl<T: gen::client::blocking::HttpClient> BlockifierState for StateProxy<T> {
         contract_address: ContractAddress,
         class_hash: ClassHash,
     ) -> StateResult<()> {
-        tracing::info!(?contract_address, ?class_hash, "set_class_hash_at");
+        tracing::debug!(?contract_address, ?class_hash, "set_class_hash_at");
         Ok(())
     }
 
@@ -277,7 +277,7 @@ impl<T: gen::client::blocking::HttpClient> BlockifierState for StateProxy<T> {
         class_hash: ClassHash,
         _contract_class: RunnableCompiledClass,
     ) -> StateResult<()> {
-        tracing::info!(?class_hash, "set_contract_class");
+        tracing::debug!(?class_hash, "set_contract_class");
         Ok(())
     }
 
@@ -286,7 +286,7 @@ impl<T: gen::client::blocking::HttpClient> BlockifierState for StateProxy<T> {
         class_hash: ClassHash,
         compiled_class_hash: CompiledClassHash,
     ) -> StateResult<()> {
-        tracing::info!(
+        tracing::debug!(
             ?class_hash,
             ?compiled_class_hash,
             "set_compiled_class_hash"
