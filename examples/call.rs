@@ -18,7 +18,7 @@ async fn main() -> Result<()> {
         database_url: format!(
             "postgresql://postgres:postgres@localhost:5432/beerus"
         ),
-        batch_size: 10,
+        l2_rate_limit: 10,
         l1_range_blocks: 9,
     };
 

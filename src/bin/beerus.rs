@@ -23,8 +23,8 @@ async fn main() -> eyre::Result<()> {
     let http = Http::new();
     let storage =
         Arc::new(SqlStorageProvider::new(&config.client.database_url).await?);
-    let beerus =
-        Client::new(&config.client, http.clone(), storage.clone()).await?;
+    let beerus = Client::new(&config.client, http, storage).await?;
+    let server = beerus::rpc::Server::new(Arc::new(beerus.clone()));
 
     {
         let period = Duration::from_secs(config.poll_secs);
@@ -63,8 +63,6 @@ async fn main() -> eyre::Result<()> {
         });
     }
 
-    let beerus = Client::new(&config.client, http, storage).await?;
-    let server = beerus::rpc::Server::new(Arc::new(beerus));
     beerus::rpc::serve_on(server, &config.rpc_addr.to_string()).await.unwrap();
     tracing::info!("rpc server started");
     Ok(())
@@ -155,7 +153,10 @@ async fn prepare_main_loop(
             })
             .await?;
     }
-    tracing::info!("Starting the sync from block {}", verified_state.block_number);
+    tracing::info!(
+        "Starting the sync from block {}",
+        verified_state.block_number
+    );
 
     // Prepare interval timer for sync period, and note when the last L1 sync was checked.
     let tick = tokio::time::interval(period);

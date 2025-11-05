@@ -14,7 +14,10 @@
 
 use blockifier::execution::call_info::CallInfo;
 
-use crate::{client::State, gen};
+use crate::{
+    client::{rate_limiter::RateLimiter, State},
+    gen,
+};
 
 pub mod cache;
 pub mod context;
@@ -52,7 +55,8 @@ pub fn call<T: gen::client::blocking::HttpClient + Clone>(
     client: gen::client::blocking::Client<T>,
     function_call: gen::FunctionCall,
     state: State,
+    rate_limiter: RateLimiter,
 ) -> Result<CallInfo, Error> {
-    let executor = executor::CallExecutor::new(client, state);
+    let executor = executor::CallExecutor::new(client, state, rate_limiter);
     executor.execute(function_call)
 }

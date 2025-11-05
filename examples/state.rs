@@ -22,7 +22,7 @@ async fn main() -> Result<()> {
             std::env::var("POSTGRES_PASSWORD")
                 .unwrap_or_else(|_| "postgres".to_string()),
         ),
-        batch_size: 10,
+        l2_rate_limit: 10,
         l1_range_blocks: 9,
     };
 

@@ -41,10 +41,32 @@ pub struct Client<
 > {
     starknet: StarknetClient<T>,
     http: T,
-    gateway: GatewayClient,
+    gateway: Arc<GatewayClient>,
     storage: Arc<S>,
-    l1_core_contract: L1CoreContract,
+    l1_core_contract: Arc<L1CoreContract>,
     config: Config,
+    rate_limiter: RateLimiter,
+}
+
+impl<
+        T: gen::client::HttpClient
+            + gen::client::blocking::HttpClient
+            + Clone
+            + 'static,
+        S: StorageProviderTrait,
+    > Clone for Client<T, S>
+{
+    fn clone(&self) -> Self {
+        Self {
+            starknet: self.starknet.clone(),
+            http: self.http.clone(),
+            gateway: self.gateway.clone(),
+            storage: self.storage.clone(),
+            l1_core_contract: self.l1_core_contract.clone(),
+            config: self.config.clone(),
+            rate_limiter: self.rate_limiter.clone(),
+        }
+    }
 }
 
 impl<
@@ -68,8 +90,9 @@ impl<
         if version1 < version2 {
             eyre::bail!("RPC spec version mismatch: expected {MIN_RPC_SPEC_VERSION} but got {rpc_spec_version}");
         }
-        let gateway = GatewayClient::new(&config.gateway_url)?;
-        let l1_core_contract = L1CoreContract::new(&config.eth_rpc);
+        let gateway = Arc::new(GatewayClient::new(&config.gateway_url)?);
+        let l1_core_contract = Arc::new(L1CoreContract::new(&config.eth_rpc));
+        let rate_limiter = RateLimiter::new(config.l2_rate_limit);
         Ok(Self {
             starknet,
             http,
@@ -77,11 +100,13 @@ impl<
             storage,
             l1_core_contract,
             config: config.clone(),
+            rate_limiter,
         })
     }
 
     /// Get the underlying Starknet client
-    pub fn starknet(&self) -> &StarknetClient<T> {
+    pub async fn starknet(&self) -> &StarknetClient<T> {
+        self.rate_limiter.wait().await;
         &self.starknet
     }
 
@@ -100,6 +125,11 @@ impl<
         &self.l1_core_contract
     }
 
+    /// Get the rate limiter
+    pub fn rate_limiter(&self) -> RateLimiter {
+        self.rate_limiter.clone()
+    }
+
     /// Execute a function call on the Starknet state
     pub fn execute(
         &self,
@@ -110,7 +140,8 @@ impl<
             &self.starknet.url,
             self.http.clone(),
         );
-        let call_info = crate::exe::call(client, request, state)?;
+        let call_info =
+            crate::exe::call(client, request, state, self.rate_limiter())?;
         call_info
             .execution
             .retdata
@@ -172,8 +203,12 @@ impl<
         // Step 1: Retrieve block with receipts from the Starknet RPC using the given block hash.
         let block_id =
             BlockId::BlockHash { block_hash: BlockHash(block_hash.clone()) };
-        let block: BlockWithReceipts =
-            self.starknet.getBlockWithReceipts(block_id).await?.try_into()?;
+        let block: BlockWithReceipts = self
+            .starknet()
+            .await
+            .getBlockWithReceipts(block_id)
+            .await?
+            .try_into()?;
 
         // Step 2: Validate the parent block hash if `prev_block_hash` is supplied.
         let parent_block_hash = block.block_header.parent_hash.0.clone();
@@ -194,7 +229,8 @@ impl<
 
         // Step 4: Fetch state update for block by number.
         let state_update = self
-            .starknet
+            .starknet()
+            .await
             .getStateUpdate(gen::BlockId::BlockNumber {
                 block_number: block.block_header.block_number.clone(),
             })
@@ -246,26 +282,22 @@ impl<
             .collect();
 
         // Step 2: Fetch each block and corresponding state update in parallel, using a rate limiter
-        let rate_limiter = RateLimiter::new(self.config.batch_size);
-
         let responses: Vec<(BlockWithReceipts, StateUpdate)> =
             futures::stream::iter(block_ids)
                 .map(|block_id| {
                     let starknet = self.starknet.clone();
-                    let rate_limiter = rate_limiter.new_instance();
+                    let rate_limiter = self.rate_limiter();
                     async move {
-                        // Wait for ratelimit slot
-                        rate_limiter.wait().await;
-
                         tracing::debug!("requesting block {:?}", block_id);
-
                         with_retry(|| async {
                             // Fetch block with receipts
+                            rate_limiter.wait().await;
                             let block: BlockWithReceipts = starknet
                                 .getBlockWithReceipts(block_id.clone())
                                 .await?
                                 .try_into()?;
                             // Fetch state update for the same block
+                            rate_limiter.wait().await;
                             let state_update: StateUpdate = starknet
                                 .getStateUpdate(block_id.clone())
                                 .await?
@@ -275,7 +307,7 @@ impl<
                         .await
                     }
                 })
-                .buffer_unordered(self.config.batch_size)
+                .buffer_unordered(10)
                 .try_collect()
                 .await?;
 

@@ -14,9 +14,9 @@ mod constants {
     pub const MAX_POLL_SECS: u64 = 3600;
     pub const MIN_L1_POLL_SECS: u64 = 30;
     pub const MAX_L1_POLL_SECS: u64 = 36000; // 10 hours
-    pub const MIN_BATCH_SIZE: usize = 1;
-    pub const MAX_BATCH_SIZE: usize = 1000;
-    pub const DEFAULT_BATCH_SIZE: usize = 10;
+    pub const MIN_L2_RATE_LIMIT: u32 = 1;
+    pub const MAX_L2_RATE_LIMIT: u32 = 1000;
+    pub const DEFAULT_L2_RATE_LIMIT: u32 = 10;
     pub const MIN_L1_RANGE_BLOCKS: u64 = 1;
     pub const MAX_L1_RANGE_BLOCKS: u64 = 100000;
     pub const DEFAULT_L1_RANGE_BLOCKS: u64 = 9;
@@ -31,7 +31,7 @@ mod env_vars {
     pub const POLL_SECS: &str = "POLL_SECS";
     pub const L1_POLL_SECS: &str = "L1_POLL_SECS";
     pub const RPC_ADDR: &str = "RPC_ADDR";
-    pub const BATCH_SIZE: &str = "BATCH_SIZE";
+    pub const L2_RATE_LIMIT: &str = "L2_RATE_LIMIT";
     pub const L1_RANGE_BLOCKS: &str = "L1_RANGE_BLOCKS";
 }
 
@@ -67,10 +67,10 @@ pub struct Config {
     pub gateway_url: String,
     #[serde(default = "default_batch_size")]
     #[validate(range(
-        min = "constants::MIN_BATCH_SIZE",
-        max = "constants::MAX_BATCH_SIZE"
+        min = "constants::MIN_L2_RATE_LIMIT",
+        max = "constants::MAX_L2_RATE_LIMIT"
     ))]
-    pub batch_size: usize,
+    pub l2_rate_limit: u32, // requests per second
     #[serde(default = "default_l1_range_blocks")]
     #[validate(range(
         min = "constants::MIN_L1_RANGE_BLOCKS",
@@ -94,7 +94,7 @@ impl ServerConfig {
                 eth_rpc: Self::parse_eth_rpc_from_env()?,
                 starknet_rpc: Self::parse_starknet_rpc_from_env()?,
                 gateway_url: Self::parse_gateway_url_from_env()?,
-                batch_size: Self::parse_batch_size_from_env()?,
+                l2_rate_limit: Self::parse_batch_size_from_env()?,
                 l1_range_blocks: Self::parse_l1_range_blocks_from_env()?,
                 #[cfg(not(target_arch = "wasm32"))]
                 database_url: Self::parse_database_url_from_env()?,
@@ -136,12 +136,12 @@ impl ServerConfig {
     }
 
     /// Parse batch size from environment variable
-    fn parse_batch_size_from_env() -> Result<usize> {
+    fn parse_batch_size_from_env() -> Result<u32> {
         parse_env_range(
-            env_vars::BATCH_SIZE,
-            constants::MIN_BATCH_SIZE,
-            constants::MAX_BATCH_SIZE,
-            constants::DEFAULT_BATCH_SIZE,
+            env_vars::L2_RATE_LIMIT,
+            constants::MIN_L2_RATE_LIMIT,
+            constants::MAX_L2_RATE_LIMIT,
+            constants::DEFAULT_L2_RATE_LIMIT,
         )
     }
 
@@ -200,8 +200,8 @@ fn default_l1_poll_secs() -> u64 {
 }
 
 /// Default batch size
-fn default_batch_size() -> usize {
-    constants::DEFAULT_BATCH_SIZE
+fn default_batch_size() -> u32 {
+    constants::DEFAULT_L2_RATE_LIMIT
 }
 
 /// Default L1 range blocks
@@ -245,7 +245,7 @@ mod tests {
                 starknet_rpc: "invalid-url".to_string(),
                 eth_rpc: "".to_string(),
                 gateway_url: "".to_string(),
-                batch_size: 10,
+                l2_rate_limit: 10,
                 l1_range_blocks: 9,
                 #[cfg(not(target_arch = "wasm32"))]
                 database_url: "".to_string(),
@@ -267,7 +267,7 @@ mod tests {
                 starknet_rpc: "https://example.com".to_string(),
                 eth_rpc: "".to_string(),
                 gateway_url: "".to_string(),
-                batch_size: 10,
+                l2_rate_limit: 10,
                 l1_range_blocks: 9,
                 #[cfg(not(target_arch = "wasm32"))]
                 database_url: "".to_string(),
@@ -289,7 +289,7 @@ mod tests {
                 starknet_rpc: "https://example.com".to_string(),
                 eth_rpc: "".to_string(),
                 gateway_url: "".to_string(),
-                batch_size: 10,
+                l2_rate_limit: 10,
                 l1_range_blocks: 9,
                 #[cfg(not(target_arch = "wasm32"))]
                 database_url: "".to_string(),
