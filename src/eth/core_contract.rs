@@ -33,7 +33,7 @@ impl L1CoreContract {
 
     pub async fn get_l1_state(&self) -> Result<State> {
         let provider =
-            ProviderBuilder::new().connect_http(self.rpc_url.parse().unwrap());
+            ProviderBuilder::new().connect_http(self.rpc_url.parse()?);
 
         let contract = StarknetCore::new(CORE_CONTRACT_ADDRESS, &provider);
 
@@ -58,7 +58,7 @@ impl L1CoreContract {
         end_block: u64,
     ) -> Result<Vec<(State, u64)>> {
         let provider =
-            ProviderBuilder::new().connect_http(self.rpc_url.parse().unwrap());
+            ProviderBuilder::new().connect_http(self.rpc_url.parse()?);
 
         let filter = Filter::new()
             .address(CORE_CONTRACT_ADDRESS)
@@ -101,7 +101,7 @@ impl L1CoreContract {
 
     pub async fn get_latest_block_number(&self) -> Result<u64> {
         let provider =
-            ProviderBuilder::new().connect_http(self.rpc_url.parse().unwrap());
+            ProviderBuilder::new().connect_http(self.rpc_url.parse()?);
 
         let block_number = provider.get_block_number().await?;
 

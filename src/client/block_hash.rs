@@ -14,8 +14,8 @@ pub fn validate_block_hash(
         block.block_header.clone().try_into()?;
 
     let transactions_data = block.block_body_with_receipts.transactions.clone().into_iter().map(|transaction_and_receipt| {
-        transaction_and_receipt.try_into().unwrap()
-    }).collect::<Vec<starknet_api::block_hash::block_hash_calculator::TransactionHashingData>>();
+        transaction_and_receipt.try_into()
+    }).collect::<Result<Vec<starknet_api::block_hash::block_hash_calculator::TransactionHashingData>, crate::exe::err::Error>>()?;
 
     // then calculate block commitments
     let block_commitments = calculate_block_commitments(

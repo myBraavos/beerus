@@ -38,8 +38,8 @@ impl Default for State {
     fn default() -> Self {
         Self {
             block_number: 0,
-            block_hash: Felt::try_new("0x0").unwrap(),
-            root: Felt::try_new("0x0").unwrap(),
+            block_hash: Felt::zero().clone(),
+            root: Felt::zero().clone(),
         }
     }
 }
@@ -49,7 +49,7 @@ impl From<GatewayState> for State {
         Self {
             block_number: gateway_state.block_number,
             block_hash: gateway_state.block_hash,
-            root: Felt::try_new("0x0").unwrap(),
+            root: Felt::zero().clone(),
         }
     }
 }

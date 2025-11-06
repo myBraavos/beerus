@@ -26,7 +26,8 @@ pub fn calculate_contract_state_hash(
     let hash = pedersen_hash(&hash, &nonce_fe);
     let hash = pedersen_hash(
         &hash,
-        &FieldElement::from_hex(CONTRACT_STATE_HASH_VERSION).unwrap(),
+        &FieldElement::from_hex(CONTRACT_STATE_HASH_VERSION)
+            .map_err(|_| create_field_element_error())?,
     );
 
     Felt::try_new(&format!("0x{:x}", hash))

@@ -150,8 +150,8 @@ impl<S: StorageProviderTrait> gen::Rpc for Context<S> {
             .retdata
             .0
             .into_iter()
-            .map(|felt| Felt::try_new(&format!("0x{:x}", felt)).unwrap())
-            .collect())
+            .map(|felt| Ok(Felt::try_new(&format!("0x{:x}", felt))?))
+            .collect::<Result<Vec<Felt>, crate::exe::err::Error>>()?)
     }
 
     async fn chainId(&self) -> Result<ChainId, jsonrpc::Error> {

@@ -1016,6 +1016,8 @@ pub mod gen {
                 .expect("Felt: valid regex")
         });
 
+        static ZERO: Lazy<Felt> = Lazy::new(|| Felt(String::from("0x0")));
+
         // The RPC spec regex is not respected anywhere these days,
         // thus such un-elegant workaround is necessary ¯\_(ツ)_/¯
         fn fix(value: &str) -> String {
@@ -1047,6 +1049,10 @@ pub mod gen {
                         ),
                     })
                 }
+            }
+
+            pub fn zero() -> &'static Self {
+                &ZERO
             }
         }
 
@@ -9006,35 +9012,55 @@ impl TryFrom<StateDiff> for starknet_api::state::ThinStateDiff {
         };
         use starknet_types_core::felt::Felt as StarkFelt;
 
-        let declared_classes     = state_diff
+        let declared_classes = state_diff
             .declared_classes
             .into_iter()
             .map(|class| {
-                (
-                    ClassHash(StarkFelt::from_hex_unchecked(class.class_hash.as_ref().unwrap().as_ref())),
+                Ok((
+                    ClassHash(StarkFelt::from_hex_unchecked(
+                        class
+                            .class_hash
+                            .as_ref()
+                            .ok_or(crate::exe::err::Error::Custom(
+                                "Class hash is missing",
+                            ))?
+                            .as_ref(),
+                    )),
                     (
-                        CompiledClassHash(StarkFelt::from_hex_unchecked(class.compiled_class_hash.as_ref().unwrap().as_ref())),
+                        CompiledClassHash(StarkFelt::from_hex_unchecked(
+                            class
+                                .compiled_class_hash
+                                .as_ref()
+                                .ok_or(crate::exe::err::Error::Custom(
+                                    "Compiled class hash is missing",
+                                ))?
+                                .as_ref(),
+                        )),
                         SierraContractClass::default(),
                     ),
-                )
+                ))
             })
-            .collect::<
-                IndexMap<ClassHash, (CompiledClassHash, SierraContractClass)>>();
+            .collect::<Result<
+                IndexMap<ClassHash, (CompiledClassHash, SierraContractClass)>,
+                crate::exe::err::Error,
+            >>()?;
         let deployed_contracts = state_diff
             .deployed_contracts
             .into_iter()
             .map(|contract| {
-                (
+                Ok((
                     ContractAddress::try_from(StarkHash::from_hex_unchecked(
                         contract.address.as_ref(),
-                    ))
-                    .unwrap(),
+                    ))?,
                     ClassHash(StarkHash::from_hex_unchecked(
                         contract.class_hash.as_ref(),
                     )),
-                )
+                ))
             })
-            .collect::<IndexMap<ContractAddress, ClassHash>>();
+            .collect::<Result<
+                IndexMap<ContractAddress, ClassHash>,
+                crate::exe::err::Error,
+            >>()?;
         let deprecated_declared_classes = state_diff
             .deprecated_declared_classes
             .into_iter()
@@ -9045,60 +9071,103 @@ impl TryFrom<StateDiff> for starknet_api::state::ThinStateDiff {
                 )
             })
             .collect::<IndexMap<ClassHash, DeprecatedContractClass>>();
-        let nonces = state_diff
-            .nonces
-            .into_iter()
-            .map(|nonce| {
-                (
-                    ContractAddress::try_from(StarkHash::from_hex_unchecked(
-                        nonce.contract_address.unwrap().0.as_ref(),
+        let nonces =
+            state_diff
+                .nonces
+                .into_iter()
+                .map(|nonce| {
+                    Ok((
+                        ContractAddress::try_from(
+                            StarkHash::from_hex_unchecked(
+                                nonce
+                                    .contract_address
+                                    .ok_or(crate::exe::err::Error::Custom(
+                                        "Contract address is missing",
+                                    ))?
+                                    .0
+                                    .as_ref(),
+                            ),
+                        )?,
+                        Nonce(StarkHash::from_hex_unchecked(
+                            nonce
+                                .nonce
+                                .unwrap_or(Felt::zero().clone())
+                                .as_ref(),
+                        )),
                     ))
-                    .unwrap(),
-                    Nonce(StarkHash::from_hex_unchecked(
-                        nonce.nonce.unwrap().as_ref(),
-                    )),
-                )
-            })
-            .collect::<IndexMap<ContractAddress, Nonce>>();
+                })
+                .collect::<Result<
+                    IndexMap<ContractAddress, Nonce>,
+                    crate::exe::err::Error,
+                >>()?;
         let replaced_classes = state_diff
             .replaced_classes
             .into_iter()
             .map(|class| {
-                (
+                Ok((
                     ContractAddress::try_from(StarkHash::from_hex_unchecked(
-                        class.contract_address.unwrap().0.as_ref(),
-                    ))
-                    .unwrap(),
+                        class
+                            .contract_address
+                            .ok_or(crate::exe::err::Error::Custom(
+                                "Contract address is missing",
+                            ))?
+                            .0
+                            .as_ref(),
+                    ))?,
                     ClassHash(StarkHash::from_hex_unchecked(
-                        class.class_hash.unwrap().as_ref(),
+                        class
+                            .class_hash
+                            .ok_or(crate::exe::err::Error::Custom(
+                                "Class hash is missing",
+                            ))?
+                            .as_ref(),
                     )),
-                )
+                ))
             })
-            .collect::<IndexMap<ContractAddress, ClassHash>>();
+            .collect::<Result<
+                IndexMap<ContractAddress, ClassHash>,
+                crate::exe::err::Error,
+            >>()?;
         let storage_diffs = state_diff
             .storage_diffs
             .into_iter()
             .map(|diff| {
-                (
+                Ok((
                     ContractAddress::try_from(StarkHash::from_hex_unchecked(
                         diff.address.as_ref(),
-                    )).unwrap(),
+                    ))?,
                     diff.storage_entries
                         .into_iter()
                         .map(|entry| {
-                            (
+                            Ok((
                                 StorageKey(PatriciaKey::from_hex_unchecked(
-                                    entry.key.unwrap().as_ref(),
+                                    entry
+                                        .key
+                                        .ok_or(crate::exe::err::Error::Custom(
+                                            "Storage key is missing",
+                                        ))?
+                                        .as_ref(),
                                 )),
-                                StarkHash::from_hex_unchecked(entry.value.unwrap().as_ref()),
-                            )
+                                StarkHash::from_hex_unchecked(
+                                    entry
+                                        .value
+                                        .ok_or(crate::exe::err::Error::Custom(
+                                            "Storage value is missing",
+                                        ))?
+                                        .as_ref(),
+                                ),
+                            ))
                         })
-                        .collect::<IndexMap<StorageKey, StarkHash>>(),
-                )
+                        .collect::<Result<
+                            IndexMap<StorageKey, StarkHash>,
+                            crate::exe::err::Error,
+                        >>()?,
+                ))
             })
-            .collect::<
-                IndexMap<ContractAddress, IndexMap<StorageKey, StarkHash>>
-            >();
+            .collect::<Result<
+                IndexMap<ContractAddress, IndexMap<StorageKey, StarkHash>>,
+                crate::exe::err::Error,
+            >>()?;
         let all_deployed_contracts = deployed_contracts
             .into_iter()
             .chain(replaced_classes)
@@ -9212,39 +9281,40 @@ impl TryFrom<TransactionAndReceipt>
             events: common_receipt_properties
                 .events
                 .into_iter()
-                .map(|event| Event {
-                    from_address: ContractAddress::try_from(
-                        StarkHash::from_hex_unchecked(
-                            event.from_address.0.as_ref(),
-                        ),
-                    )
-                    .unwrap(),
-                    content: EventContent {
-                        data: EventData(
-                            event
+                .map(|event| {
+                    Ok(Event {
+                        from_address: ContractAddress::try_from(
+                            StarkHash::from_hex_unchecked(
+                                event.from_address.0.as_ref(),
+                            ),
+                        )?,
+                        content: EventContent {
+                            data: EventData(
+                                event
+                                    .event_content
+                                    .data
+                                    .into_iter()
+                                    .map(|data_item| {
+                                        StarkHash::from_hex_unchecked(
+                                            data_item.as_ref(),
+                                        )
+                                    })
+                                    .collect::<Vec<StarkHash>>(),
+                            ),
+                            keys: event
                                 .event_content
-                                .data
+                                .keys
                                 .into_iter()
-                                .map(|data_item| {
-                                    StarkHash::from_hex_unchecked(
-                                        data_item.as_ref(),
-                                    )
+                                .map(|key_item| {
+                                    EventKey(StarkHash::from_hex_unchecked(
+                                        key_item.as_ref(),
+                                    ))
                                 })
-                                .collect::<Vec<StarkHash>>(),
-                        ),
-                        keys: event
-                            .event_content
-                            .keys
-                            .into_iter()
-                            .map(|key_item| {
-                                EventKey(StarkHash::from_hex_unchecked(
-                                    key_item.as_ref(),
-                                ))
-                            })
-                            .collect::<Vec<EventKey>>(),
-                    },
+                                .collect::<Vec<EventKey>>(),
+                        },
+                    })
                 })
-                .collect::<Vec<Event>>(),
+                .collect::<Result<Vec<Event>, crate::exe::err::Error>>()?,
             execution_status,
             gas_consumed: GasVector {
                 l1_gas: GasAmount(
@@ -9261,29 +9331,32 @@ impl TryFrom<TransactionAndReceipt>
             messages_sent: common_receipt_properties
                 .messages_sent
                 .into_iter()
-                .map(|msg| MessageToL1 {
-                    from_address: ContractAddress::try_from(
-                        StarkHash::from_hex_unchecked(
-                            msg.from_address.as_ref(),
+                .map(|msg| {
+                    Ok(MessageToL1 {
+                        from_address: ContractAddress::try_from(
+                            StarkHash::from_hex_unchecked(
+                                msg.from_address.as_ref(),
+                            ),
+                        )?,
+                        to_address: EthAddress::try_from(
+                            StarkHash::from_hex_unchecked(
+                                msg.to_address.as_ref(),
+                            ),
+                        )?,
+                        payload: L2ToL1Payload(
+                            msg.payload
+                                .into_iter()
+                                .map(|payload_item| {
+                                    StarkHash::from_hex_unchecked(
+                                        payload_item.as_ref(),
+                                    )
+                                })
+                                .collect::<Vec<StarkHash>>(),
                         ),
-                    )
-                    .unwrap(),
-                    to_address: EthAddress::try_from(
-                        StarkHash::from_hex_unchecked(msg.to_address.as_ref()),
-                    )
-                    .unwrap(),
-                    payload: L2ToL1Payload(
-                        msg.payload
-                            .into_iter()
-                            .map(|payload_item| {
-                                StarkHash::from_hex_unchecked(
-                                    payload_item.as_ref(),
-                                )
-                            })
-                            .collect::<Vec<StarkHash>>(),
-                    ),
+                    })
                 })
-                .collect::<Vec<MessageToL1>>(),
+                .collect::<Result<Vec<MessageToL1>, crate::exe::err::Error>>(
+                )?,
         };
 
         Ok(Self {
