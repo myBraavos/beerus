@@ -23,4 +23,8 @@ impl L1Range {
     pub fn prev_start(&self, origin: u64, l1_range_blocks: u64) -> u64 {
         std::cmp::max(origin - l1_range_blocks, self.l1_start as u64)
     }
+
+    pub fn l1_equals(&self, other: &L1Range) -> bool {
+        self.l1_start == other.l1_start && self.l1_end == other.l1_end
+    }
 }

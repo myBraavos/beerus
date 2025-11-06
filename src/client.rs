@@ -453,7 +453,7 @@ impl<
         // Retrieve the corresponding L1 range from storage; this describes which L1 blocks
         // encapsulate the L2 state transitions relevant to `block_number`.
         let l1_range = self.storage().read_l1_range(block_number).await?;
-        tracing::debug!(?l1_range, "L1 range from storage");
+        tracing::info!(?l1_range, "L1 range from storage");
 
         // Identify the smallest necessary L1 range and its start/end verified state.
         let (start_state, end_state) =
@@ -568,7 +568,9 @@ impl<
             }
 
             // If not found above, search "below" by stepping downwards.
-            if found_sub_range.is_none() {
+            if found_sub_range.is_none()
+                || l1_range.l1_equals(&found_sub_range.clone().unwrap())
+            {
                 l1_block_end = l1_initial_start;
                 l1_block_start = l1_range
                     .prev_start(l1_initial_start, self.config.l1_range_blocks);
@@ -601,10 +603,19 @@ impl<
                 }
             }
 
-            // At this point we should have found a sub-range, otherwise we received invalid data from L1.
-            l1_range = found_sub_range.ok_or(eyre::eyre!(
-                "L1 range not found for block {block_number}"
-            ))?;
+            if let Some(found_sub_range) = found_sub_range {
+                if l1_range.l1_equals(&found_sub_range) {
+                    // The found sub-range is the smallest possible
+                    break;
+                } else {
+                    l1_range = found_sub_range;
+                }
+            } else {
+                // At this point we should have found a sub-range, otherwise we received invalid data from L1.
+                return Err(eyre::eyre!(
+                    "L1 range not found for block {block_number}"
+                ));
+            }
         }
 
         // Persist all newly discovered L1 sub-ranges for future efficiency.
