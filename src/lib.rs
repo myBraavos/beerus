@@ -1,3 +1,4 @@
+pub mod background_loader;
 pub mod client;
 pub mod config;
 pub mod convert;

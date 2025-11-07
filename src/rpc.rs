@@ -27,6 +27,7 @@ use std::sync::Arc;
 
 use axum::{routing::post, Router};
 
+use crate::background_loader::async_blocker::AsyncBlocker;
 use crate::client::Client;
 use crate::rpc::context::Context;
 use crate::rpc::handler::handle_request;
@@ -35,6 +36,7 @@ use crate::storage::storage_trait::StorageProviderTrait;
 /// RPC server for handling Starknet JSON-RPC requests
 pub struct Server<S: StorageProviderTrait> {
     client: Arc<Client<crate::client::http::Http, S>>,
+    async_blocker: Arc<AsyncBlocker>,
 }
 
 impl<S: StorageProviderTrait> Server<S> {
@@ -43,8 +45,12 @@ impl<S: StorageProviderTrait> Server<S> {
     /// # Arguments
     ///
     /// * `client` - The Starknet client for handling requests
-    pub fn new(client: Arc<Client<crate::client::http::Http, S>>) -> Self {
-        Self { client }
+    /// * `async_blocker` - The async blocker to prevent background tasks when there is a request from a user
+    pub fn new(
+        client: Arc<Client<crate::client::http::Http, S>>,
+        async_blocker: Arc<AsyncBlocker>,
+    ) -> Self {
+        Self { client, async_blocker }
     }
 
     /// Create the Axum router for the RPC server
@@ -52,7 +58,7 @@ impl<S: StorageProviderTrait> Server<S> {
     /// This method creates a new router with the RPC endpoint configured
     /// and the context set up for request handling.
     pub fn router(self) -> Router {
-        let ctx = Context::new(self.client);
+        let ctx = Context::new(self.client, self.async_blocker);
         Router::new().route("/", post(handle_request::<S>)).with_state(ctx)
     }
 }

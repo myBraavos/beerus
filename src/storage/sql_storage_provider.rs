@@ -8,7 +8,8 @@ use crate::{
 };
 use async_trait::async_trait;
 use eyre::Result;
-use sqlx::{Pool, Postgres};
+use sqlx::{Pool, Postgres, QueryBuilder};
+use std::collections::HashMap;
 
 const INSERT_STATE_QUERY: &str =
     "INSERT INTO state (block_number, block_hash, root)
@@ -123,6 +124,20 @@ impl StorageProviderTrait for SqlStorageProvider {
         parse_state_row(row)
     }
 
+    async fn read_states_by_range(
+        &self,
+        start_block: i64,
+        end_block: i64,
+    ) -> Result<Vec<State>> {
+        let query = "SELECT block_number, block_hash, root FROM state WHERE block_number >= $1 AND block_number <= $2";
+        let rows: Vec<(i64, String, String)> = sqlx::query_as(query)
+            .bind(start_block)
+            .bind(end_block)
+            .fetch_all(&self.pool)
+            .await?;
+        rows.into_iter().map(|row| parse_state_row(Some(row))).collect()
+    }
+
     async fn read_state_by_hash(&self, block_hash: &Felt) -> Result<State> {
         let query = "SELECT block_number, block_hash, root FROM state WHERE block_hash = $1";
         let row: Option<(i64, String, String)> = sqlx::query_as(query)
@@ -174,18 +189,68 @@ impl StorageProviderTrait for SqlStorageProvider {
         parse_l1_range_row(row)
     }
 
-    async fn write_l1_range(&self, l1_range: &L1Range) -> Result<()> {
-        let query = "INSERT INTO l1_range (l1_start, l1_end, l2_start, l2_end)
-            VALUES ($1, $2, $3, $4)
-            ON CONFLICT (l1_start)
-            DO UPDATE SET l1_end = $2, l2_start = $3, l2_end = $4";
-        sqlx::query(query)
-            .bind(l1_range.l1_start)
-            .bind(l1_range.l1_end)
-            .bind(l1_range.l2_start)
-            .bind(l1_range.l2_end)
-            .execute(&self.pool)
+    async fn find_big_range(
+        &self,
+        start_block: i64,
+        range_size: i64,
+    ) -> Result<L1Range> {
+        let query = "SELECT l1_start, l1_end, l2_start, l2_end
+                     FROM l1_range
+                     WHERE l2_end >= $1 AND l2_end - l2_start >= $2
+                     ORDER BY l2_start DESC
+                     LIMIT 1";
+        let row: Option<(i64, i64, i64, i64)> = sqlx::query_as(query)
+            .bind(start_block)
+            .bind(range_size)
+            .fetch_optional(&self.pool)
             .await?;
+        parse_l1_range_row(row)
+    }
+
+    async fn write_l1_range(&self, l1_range: &L1Range) -> Result<()> {
+        self.write_l1_ranges(std::slice::from_ref(l1_range)).await
+    }
+
+    async fn write_l1_ranges(&self, l1_ranges: &[L1Range]) -> Result<()> {
+        if l1_ranges.is_empty() {
+            return Ok(());
+        }
+
+        // Deduplicate ranges by l1_start to avoid "cannot affect row a second time" error
+        // Keep the last occurrence of each l1_start
+        let mut unique_ranges: HashMap<i64, L1Range> = HashMap::new();
+        for range in l1_ranges {
+            unique_ranges.insert(range.l1_start, range.clone());
+        }
+        let deduplicated: Vec<L1Range> = unique_ranges.into_values().collect();
+
+        if deduplicated.is_empty() {
+            return Ok(());
+        }
+
+        let mut tx = self.pool.begin().await?;
+
+        let mut builder: QueryBuilder<Postgres> = QueryBuilder::new(
+            "INSERT INTO l1_range (l1_start, l1_end, l2_start, l2_end) ",
+        );
+
+        builder.push_values(&deduplicated, |mut b, range| {
+            b.push_bind(range.l1_start)
+                .push_bind(range.l1_end)
+                .push_bind(range.l2_start)
+                .push_bind(range.l2_end);
+        });
+
+        builder.push(
+            " ON CONFLICT (l1_start)
+              DO UPDATE SET
+                l1_end = EXCLUDED.l1_end,
+                l2_start = EXCLUDED.l2_start,
+                l2_end = EXCLUDED.l2_end",
+        );
+
+        builder.build().execute(&mut *tx).await?;
+        tx.commit().await?;
         Ok(())
     }
 }

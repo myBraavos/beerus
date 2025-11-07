@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use iamgroot::jsonrpc;
 
+use crate::background_loader::async_blocker::AsyncBlocker;
 use crate::r#gen::{
     GetBlockWithReceiptsResult, GetTransactionByBlockIdAndIndexIndex,
     TxnReceiptWithBlockInfo,
@@ -31,14 +32,19 @@ use crate::{
 pub struct Context<S: StorageProviderTrait> {
     pub client: Arc<Client<crate::client::http::Http, S>>,
     pub state: Arc<tokio::sync::RwLock<ClientState>>,
+    pub async_blocker: Arc<AsyncBlocker>,
 }
 
 impl<S: StorageProviderTrait> Context<S> {
     /// Create a new RPC context
-    pub fn new(client: Arc<Client<crate::client::http::Http, S>>) -> Self {
+    pub fn new(
+        client: Arc<Client<crate::client::http::Http, S>>,
+        async_blocker: Arc<AsyncBlocker>,
+    ) -> Self {
         Self {
             client,
             state: Arc::new(tokio::sync::RwLock::new(ClientState::default())),
+            async_blocker,
         }
     }
 
@@ -132,6 +138,10 @@ impl<S: StorageProviderTrait> gen::Rpc for Context<S> {
         request: FunctionCall,
         block_id: BlockId,
     ) -> Result<Vec<Felt>, jsonrpc::Error> {
+        // Call requests are heavy, block all background tasks
+        let _guard = self.async_blocker.block_tasks();
+        tracing::info!("Received call request on block {:?}", block_id);
+
         let state = self
             .client
             .get_state_at(block_id)

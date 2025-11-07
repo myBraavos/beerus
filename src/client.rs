@@ -2,6 +2,7 @@ use eyre::Result;
 use futures::stream::{StreamExt, TryStreamExt};
 use std::sync::Arc;
 
+use crate::background_loader::async_blocker::AsyncBlocker;
 use crate::client::block_hash::validate_block_hash;
 use crate::client::l1_range::L1Range;
 use crate::client::rate_limiter::RateLimiter;
@@ -29,9 +30,10 @@ pub use utils::as_felt;
 
 const MIN_RPC_SPEC_VERSION: &str = "0.8.1";
 const MAX_STARKNET_VERSION: &str = "0.14.0";
-const FIRST_SUPPORTED_BLOCK_NUMBER: i64 = 1_000_000;
+pub const FIRST_SUPPORTED_BLOCK_NUMBER: i64 = 1_000_000;
 
-/// Main client for interacting with Starknet
+/// Main client for syncing and verifying Starknet state
+#[derive(Clone)]
 pub struct Client<
     T: gen::client::HttpClient
         + gen::client::blocking::HttpClient
@@ -46,27 +48,6 @@ pub struct Client<
     l1_core_contract: Arc<L1CoreContract>,
     config: Config,
     rate_limiter: RateLimiter,
-}
-
-impl<
-        T: gen::client::HttpClient
-            + gen::client::blocking::HttpClient
-            + Clone
-            + 'static,
-        S: StorageProviderTrait,
-    > Clone for Client<T, S>
-{
-    fn clone(&self) -> Self {
-        Self {
-            starknet: self.starknet.clone(),
-            http: self.http.clone(),
-            gateway: self.gateway.clone(),
-            storage: self.storage.clone(),
-            l1_core_contract: self.l1_core_contract.clone(),
-            config: self.config.clone(),
-            rate_limiter: self.rate_limiter.clone(),
-        }
-    }
 }
 
 impl<
@@ -128,6 +109,11 @@ impl<
     /// Get the rate limiter
     pub fn rate_limiter(&self) -> RateLimiter {
         self.rate_limiter.clone()
+    }
+
+    /// Get the configuration
+    pub fn config(&self) -> &Config {
+        &self.config
     }
 
     /// Execute a function call on the Starknet state
@@ -267,6 +253,7 @@ impl<
         &self,
         start_state: State,
         end_state: State,
+        async_blocker: Option<Arc<AsyncBlocker>>,
     ) -> Result<()> {
         // Step 1: Collect all block IDs to verify (exclusive range)
         tracing::info!(
@@ -287,8 +274,12 @@ impl<
                 .map(|block_id| {
                     let starknet = self.starknet.clone();
                     let rate_limiter = self.rate_limiter();
+                    let async_blocker = async_blocker.clone();
                     async move {
                         tracing::debug!("requesting block {:?}", block_id);
+                        if let Some(async_blocker) = async_blocker {
+                            async_blocker.wait_for_unlock().await;
+                        }
                         with_retry(|| async {
                             // Fetch block with receipts
                             rate_limiter.wait().await;
@@ -314,23 +305,29 @@ impl<
         // Step 3: For each fetched (block,state_update), validate block hash in parallel
         let mut results: Vec<BlockWithReceipts> =
             futures::stream::iter(responses)
-                .map(|(block, state_update)| async move {
-                    tracing::debug!(
-                        "validating block hash for block {}",
-                        block.block_header.block_number.0
-                    );
-                    let block1 = block.clone();
-                    // Validate in a blocking thread since it may be CPU-heavy
-                    let _ = tokio::task::spawn_blocking(move || {
-                        validate_block_hash(
-                            &block,
-                            &state_update,
-                            &block.block_header.block_hash.0,
-                        )?;
-                        Ok::<(), eyre::Error>(())
-                    })
-                    .await?;
-                    Ok::<BlockWithReceipts, eyre::Error>(block1)
+                .map(|(block, state_update)| {
+                    let async_blocker = async_blocker.clone();
+                    async move {
+                        if let Some(async_blocker) = async_blocker {
+                            async_blocker.wait_for_unlock().await;
+                        }
+                        tracing::debug!(
+                            "validating block hash for block {}",
+                            block.block_header.block_number.0
+                        );
+                        let block1 = block.clone();
+                        // Validate in a blocking thread since it may be CPU-heavy
+                        let _ = tokio::task::spawn_blocking(move || {
+                            validate_block_hash(
+                                &block,
+                                &state_update,
+                                &block.block_header.block_hash.0,
+                            )?;
+                            Ok::<(), eyre::Error>(())
+                        })
+                        .await?;
+                        Ok::<BlockWithReceipts, eyre::Error>(block1)
+                    }
                 })
                 .buffer_unordered(100)
                 .try_collect()
@@ -473,7 +470,8 @@ impl<
             );
             // This function verifies all L2 blocks between start_state and end_state,
             // storing them to persistent storage, including the target state.
-            self.verify_state_range(start_state.clone(), end_state).await?;
+            self.verify_state_range(start_state.clone(), end_state, None)
+                .await?;
         };
 
         // Finally, retrieve and return the requested, now-verified state from storage.
@@ -542,7 +540,7 @@ impl<
 
             // Search for sub-ranges above the current block (progressing upward).
             while !is_target_below_range
-                && l1_block_end <= l1_range.l1_end as u64
+                && l1_block_start <= l1_range.l1_end as u64
             {
                 // Query for all L1 state updates within [l1_block_start, l1_block_end]
                 let states = self
@@ -575,7 +573,7 @@ impl<
                 l1_block_start = l1_range
                     .prev_start(l1_initial_start, self.config.l1_range_blocks);
                 while is_target_below_range
-                    && l1_block_start >= l1_range.l1_start as u64
+                    && l1_block_end >= l1_range.l1_start as u64
                 {
                     // Look for state updates in window [l1_block_start, l1_block_end]
                     let states = self
@@ -619,9 +617,7 @@ impl<
         }
 
         // Persist all newly discovered L1 sub-ranges for future efficiency.
-        for l1_range in new_l1_ranges {
-            self.storage().write_l1_range(&l1_range).await?;
-        }
+        self.storage().write_l1_ranges(&new_l1_ranges).await?;
 
         // TODO: Could use already fetched states for efficiency
         // Fetch the starting state for the minimal range. This will always be present, otherwise we received invalid data from L1.

@@ -1,6 +1,9 @@
 use std::{sync::Arc, time::Duration};
 
 use beerus::{
+    background_loader::{
+        async_blocker::AsyncBlocker, loader::BackgroundLoader,
+    },
     client::{state::GatewayState, Client, Http, State},
     config::ServerConfig,
     gen::{BlockId, BlockNumber},
@@ -23,8 +26,14 @@ async fn main() -> eyre::Result<()> {
     let http = Http::new();
     let storage =
         Arc::new(SqlStorageProvider::new(&config.client.database_url).await?);
+    let async_blocker = Arc::new(AsyncBlocker::new());
     let beerus = Client::new(&config.client, http, storage).await?;
-    let server = beerus::rpc::Server::new(Arc::new(beerus.clone()));
+    let server = beerus::rpc::Server::new(
+        Arc::new(beerus.clone()),
+        async_blocker.clone(),
+    );
+    let background_loader =
+        BackgroundLoader::new(Arc::new(beerus.clone()), async_blocker.clone());
 
     {
         let period = Duration::from_secs(config.poll_secs);
@@ -34,7 +43,9 @@ async fn main() -> eyre::Result<()> {
                 mut l1_sync_check,
                 mut gateway_state,
                 mut verified_state,
-            ) = match prepare_main_loop(&beerus, period).await {
+            ) = match prepare_main_loop(&beerus, async_blocker.clone(), period)
+                .await
+            {
                 Ok((tick, l1_sync_check, gateway_state, verified_state)) => {
                     (tick, l1_sync_check, gateway_state, verified_state)
                 }
@@ -45,6 +56,7 @@ async fn main() -> eyre::Result<()> {
             };
             loop {
                 tick.tick().await;
+                let _guard = async_blocker.block_tasks();
                 match execute_sync(
                     &beerus,
                     &mut gateway_state,
@@ -62,6 +74,10 @@ async fn main() -> eyre::Result<()> {
             }
         });
     }
+
+    tokio::spawn(async move {
+        background_loader.run().await;
+    });
 
     beerus::rpc::serve_on(server, &config.rpc_addr.to_string()).await.unwrap();
     tracing::info!("rpc server started");
@@ -118,8 +134,11 @@ async fn get_config() -> eyre::Result<ServerConfig> {
 /// 6. Return the timers and state as a tuple for driving the sync task.
 async fn prepare_main_loop(
     beerus: &Client<Http, SqlStorageProvider>,
+    async_blocker: Arc<AsyncBlocker>,
     period: Duration,
 ) -> eyre::Result<(tokio::time::Interval, Instant, GatewayState, State)> {
+    let _guard = async_blocker.block_tasks();
+
     // Attempt to find the last synced L2 state in persistent storage.
     let latest_stored_state = beerus.storage().read_latest_state().await;
     let latest_stored_block = match &latest_stored_state {
@@ -144,6 +163,7 @@ async fn prepare_main_loop(
             .verify_state_range(
                 verified_state.clone(),
                 gateway_state.clone().into(),
+                None,
             )
             .await?;
         verified_state = beerus

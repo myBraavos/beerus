@@ -1,4 +1,4 @@
-FROM rust:1.90-bullseye AS builder
+FROM rust:1.90-slim-bullseye AS builder
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
     libssl-dev \
     pkg-config \
@@ -12,13 +12,15 @@ COPY Cargo.toml Cargo.lock ./
 RUN mkdir src && echo "fn main() {}" > src/main.rs
 
 # Build dependencies (this layer will be cached unless Cargo.toml/Cargo.lock changes)
-RUN cargo build --release --bin beerus && rm -rf src
+RUN CARGO_BUILD_JOBS=$(nproc) \
+    cargo build --release --bin beerus && rm -rf src
 
 # Copy the actual source code
-COPY . .
+COPY src/ ./src/
 
 # Build the actual binary (only rebuilds if source code changes)
-RUN cargo build --release --bin beerus
+RUN CARGO_BUILD_JOBS=$(nproc) \
+    cargo build --release --bin beerus
 RUN strip target/release/beerus
 
 FROM debian:bullseye-slim
