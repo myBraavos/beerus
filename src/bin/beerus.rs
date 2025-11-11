@@ -27,13 +27,11 @@ async fn main() -> eyre::Result<()> {
     let storage =
         Arc::new(SqlStorageProvider::new(&config.client.database_url).await?);
     let async_blocker = Arc::new(AsyncBlocker::new());
-    let beerus = Client::new(&config.client, http, storage).await?;
-    let server = beerus::rpc::Server::new(
-        Arc::new(beerus.clone()),
-        async_blocker.clone(),
-    );
+    let beerus = Arc::new(Client::new(&config.client, http, storage).await?);
+    let server =
+        beerus::rpc::Server::new(beerus.clone(), async_blocker.clone());
     let background_loader =
-        BackgroundLoader::new(Arc::new(beerus.clone()), async_blocker.clone());
+        BackgroundLoader::new(beerus.clone(), async_blocker.clone());
 
     {
         let period = Duration::from_secs(config.poll_secs);

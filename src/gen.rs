@@ -6234,7 +6234,7 @@ pub mod gen {
                 block_id: BlockId,
             ) -> std::result::Result<GetBlockWithReceiptsResult, jsonrpc::Error>
             {
-                let args = (block_id,);
+                let args = (block_id.clone(),);
 
                 let params: serde_json::Value = serde_json::to_value(args)
                     .map_err(|e| {
@@ -6255,7 +6255,7 @@ pub mod gen {
                 tracing::debug!(response=?res, "processing");
 
                 if let Some(err) = res.error.take() {
-                    tracing::error!(error=?err, "failed");
+                    tracing::error!(block_id=?block_id, error=?err, "Failed to get block with receipts");
                     return Err(err);
                 }
 

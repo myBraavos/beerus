@@ -1,6 +1,8 @@
 use eyre::Result;
 use futures::stream::{StreamExt, TryStreamExt};
+use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::sync::{Mutex, RwLock};
 
 use crate::background_loader::async_blocker::AsyncBlocker;
 use crate::client::block_hash::validate_block_hash;
@@ -32,6 +34,8 @@ const MIN_RPC_SPEC_VERSION: &str = "0.8.1";
 const MAX_STARKNET_VERSION: &str = "0.14.0";
 pub const FIRST_SUPPORTED_BLOCK_NUMBER: i64 = 1_000_000;
 
+type L1LockMap = Arc<RwLock<HashMap<(i64, i64), Arc<Mutex<()>>>>>;
+
 /// Main client for syncing and verifying Starknet state
 #[derive(Clone)]
 pub struct Client<
@@ -48,6 +52,7 @@ pub struct Client<
     l1_core_contract: Arc<L1CoreContract>,
     config: Config,
     rate_limiter: RateLimiter,
+    l1_locks: L1LockMap,
 }
 
 impl<
@@ -74,6 +79,7 @@ impl<
         let gateway = Arc::new(GatewayClient::new(&config.gateway_url)?);
         let l1_core_contract = Arc::new(L1CoreContract::new(&config.eth_rpc));
         let rate_limiter = RateLimiter::new(config.l2_rate_limit);
+        let l1_locks = Arc::new(RwLock::new(HashMap::new()));
         Ok(Self {
             starknet,
             http,
@@ -82,6 +88,7 @@ impl<
             l1_core_contract,
             config: config.clone(),
             rate_limiter,
+            l1_locks,
         })
     }
 
@@ -408,7 +415,8 @@ impl<
                     .await?;
 
                 // Use L1 (Ethereum) to validate and reconstruct the state at that block number.
-                self.sync_state_using_l1(gateway_state.block_number).await
+                self.sync_state_using_l1_parallel(gateway_state.block_number)
+                    .await
             }
             BlockId::BlockNumber { block_number } => {
                 // Try to find the state in storage by block number.
@@ -419,9 +427,63 @@ impl<
                 }
 
                 // If not found, use L1 to validate and reconstruct the state at the given block number.
-                self.sync_state_using_l1(block_number.0).await
+                self.sync_state_using_l1_parallel(block_number.0).await
             }
         }
+    }
+
+    /// Synchronizes the Starknet L2 state for the specified block number using L1 (Ethereum) event proofs,
+    /// with parallel-safe locking to avoid redundant computation.
+    ///
+    /// This function ensures that only one concurrent operation synchronizes any given L1 range to prevent
+    /// multiple tasks/threads from recomputing and writing the same state data. If many sync requests overlap,
+    /// they will queue and reuse the result.
+    ///
+    /// # Arguments
+    /// * `block_number` - The Starknet L2 block number to synchronize and verify.
+    ///
+    /// # Returns
+    /// A [`State`] corresponding to the requested block number, verified via L1 proofs, and written to storage.
+    ///
+    /// # Algorithm Steps
+    /// 1. Reads the L1 range that covers the given L2 block number from persistent storage.
+    /// 2. Acquires (or creates) a mutex protecting this L1 range in a global lock map, ensuring only one task syncs a given range at a time.
+    /// 3. Reacquires the latest L1 range from storage, in case another task has updated the range while waiting for the lock.
+    /// 4. Proceeds to call the underlying L1 synchronization logic, which verifies the state and updates storage.
+    async fn sync_state_using_l1_parallel(
+        &self,
+        block_number: i64,
+    ) -> Result<State> {
+        // Step 1: Read the L1 range from storage; this describes which L1 blocks
+        // encapsulate the L2 state transitions relevant to `block_number`.
+        let l1_range = self.storage().read_l1_range(block_number).await?;
+
+        // Step 2: Get or create a lock for this specific L1 range.
+        // Locks are keyed by (l1_start, l1_end) tuple.
+        let lock_arc = {
+            let mut locks = self.l1_locks.write().await;
+            // Insert a new lock (Mutex) for this range if it does not exist.
+            locks
+                .entry((l1_range.l1_start, l1_range.l1_end))
+                .or_insert_with(|| Arc::new(Mutex::new(())))
+                .clone()
+        };
+
+        // Step 3: Try acquiring the lock (waiting if already in use by another sync on the same range).
+        // This ensures only one active sync per L1 range at a time.
+        let _guard = lock_arc.lock().await;
+
+        // Step 4: Check if the state was synced during the lock acquisition.
+        if let Ok(state) = self.storage().read_state(block_number).await {
+            return Ok(state);
+        }
+
+        // Step 5: Read the L1 range from storage again, in case it changed while waiting for the lock.
+        let l1_range = self.storage().read_l1_range(block_number).await?;
+        tracing::info!(?l1_range, "L1 range from storage");
+
+        // Step 6: Perform the actual sync using L1, writing the verified state to storage.
+        self.sync_state_using_l1(l1_range, block_number).await
     }
 
     /// Synchronizes a specific Starknet L2 state using L1 (Ethereum) event proofs.
@@ -439,6 +501,7 @@ impl<
     /// 5. Returns the final verified state for the given block number from persistent storage.
     ///
     /// # Arguments
+    /// * `l1_range` - The L1 range that contains L2 state
     /// * `block_number` - The L2 Starknet block number to synchronize.
     ///
     /// # Returns
@@ -446,12 +509,11 @@ impl<
     ///
     /// # Errors
     /// Returns an error if storage access, L1 event retrieval, or state verification fails.
-    async fn sync_state_using_l1(&self, block_number: i64) -> Result<State> {
-        // Retrieve the corresponding L1 range from storage; this describes which L1 blocks
-        // encapsulate the L2 state transitions relevant to `block_number`.
-        let l1_range = self.storage().read_l1_range(block_number).await?;
-        tracing::info!(?l1_range, "L1 range from storage");
-
+    async fn sync_state_using_l1(
+        &self,
+        l1_range: L1Range,
+        block_number: i64,
+    ) -> Result<State> {
         // Identify the smallest necessary L1 range and its start/end verified state.
         let (start_state, end_state) =
             self.get_minimal_l1_range(l1_range, block_number).await?;
