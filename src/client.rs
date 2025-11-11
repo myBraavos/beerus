@@ -515,29 +515,31 @@ impl<
         block_number: i64,
     ) -> Result<State> {
         // Identify the smallest necessary L1 range and its start/end verified state.
-        let (start_state, end_state) =
-            self.get_minimal_l1_range(l1_range, block_number).await?;
-        tracing::debug!(?start_state, ?end_state, "found minimal L1 range");
+        let end_state =
+            self.get_end_state_for_l1_range(l1_range, block_number).await?;
 
-        // Persist the starting state from the minimal range (may be sufficient if block is on a range boundary).
-        self.storage().write_state(&start_state).await?;
+        // Get verified state for the target block
+        let gateway_state = self.get_gateway_state(block_number).await?;
+        let target_state =
+            self.get_verified_state(&gateway_state.block_hash, None).await?;
 
-        // If an end state is present, it means our exact target state was not at a range boundary
-        // and we must verify all intermediate transitions from start_state to end_state.
-        if let Some(end_state) = end_state {
+        // If an end state is the same as the target state, it means the chain was already verified
+        // or the block is at the L1 range boundary
+        if target_state.block_hash != end_state.block_hash {
             tracing::debug!(
                 "verifying states from {} to {}",
-                start_state.block_number,
+                target_state.block_number,
                 end_state.block_number
             );
             // This function verifies all L2 blocks between start_state and end_state,
             // storing them to persistent storage, including the target state.
-            self.verify_state_range(start_state.clone(), end_state, None)
+            self.verify_state_range(target_state.clone(), end_state, None)
                 .await?;
         };
 
-        // Finally, retrieve and return the requested, now-verified state from storage.
-        self.storage().read_state(block_number).await
+        // Persist the state of the target block after verification is done
+        self.storage().write_state(&target_state).await?;
+        Ok(target_state)
     }
 
     /// Finds the minimal L1 range necessary to verify the state for a given L2 block number.
@@ -554,29 +556,27 @@ impl<
     /// * `block_number` - The target L2 block number to verify.
     ///
     /// # Returns
-    /// Returns (`State`, `Option<State>`), where:
-    /// - The first is always the starting state (for target, or range start).
-    /// - The second is an optional end state (if the L2 block is between state updates)
+    /// Returns the end state of minimal L1 range for the given L2 block number.
     ///
     /// # Errors
     /// Returns an error if no suitable state can be found or data retrieval fails.
-    async fn get_minimal_l1_range(
+    async fn get_end_state_for_l1_range(
         &self,
         mut l1_range: L1Range,
         block_number: i64,
-    ) -> Result<(State, Option<State>)> {
+    ) -> Result<State> {
         // Check if the block number coincides with the start or end of the L1 range.
         // In that case, fetch and return the corresponding state immediately.
         if block_number == l1_range.l2_start {
             let state = self.l1().get_state_on_block(l1_range.l1_start).await?;
             if let Some(state) = state {
-                return Ok((state, None));
+                return Ok(state);
             }
             tracing::warn!("State update not found for block {block_number}, using L1 range start state");
         } else if block_number == l1_range.l2_end {
             let state = self.l1().get_state_on_block(l1_range.l1_end).await?;
             if let Some(state) = state {
-                return Ok((state, None));
+                return Ok(state);
             }
             tracing::warn!("State update not found for block {block_number}, using L1 range end state");
         }
@@ -681,21 +681,18 @@ impl<
         // Persist all newly discovered L1 sub-ranges for future efficiency.
         self.storage().write_l1_ranges(&new_l1_ranges).await?;
 
-        // TODO: Could use already fetched states for efficiency
         // Fetch the starting state for the minimal range. This will always be present, otherwise we received invalid data from L1.
-        let start_state = self
-            .l1()
-            .get_state_on_block(l1_range.l1_start)
+        let end_state_from_storage =
+            self.storage().read_state_after(block_number).await;
+        if let Ok(end_state_from_storage) = end_state_from_storage {
+            if end_state_from_storage.block_number <= l1_range.l2_end {
+                return Ok(end_state_from_storage);
+            }
+        }
+        self.l1()
+            .get_state_on_block(l1_range.l1_end)
             .await?
-            .ok_or(eyre::eyre!("State not found"))?;
-        let end_state: Option<State> = if l1_range.l2_end == l1_range.l2_start {
-            // The exact block was found in L1 commitment, no need to verify the range
-            None
-        } else {
-            self.l1().get_state_on_block(l1_range.l1_end).await?
-        };
-
-        Ok((start_state, end_state))
+            .ok_or(eyre::eyre!("State not found"))
     }
 
     /// Stores the latest L1 range in persistent storage, updating it if the provided L1 state is ahead.

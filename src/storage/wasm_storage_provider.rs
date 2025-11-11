@@ -14,6 +14,9 @@ impl StorageProviderTrait for WasmStorageProvider {
     async fn read_state(&self, _block_number: i64) -> Result<State> {
         panic!("Not implemented");
     }
+    async fn read_state_after(&self, _block_number: i64) -> Result<State> {
+        panic!("Not implemented");
+    }
     async fn read_states_by_range(
         &self,
         _start_block: i64,

@@ -35,6 +35,7 @@ impl Storages {
 pub trait StorageProviderTrait: Send + Sync + Clone + 'static {
     // l2 state
     async fn read_state(&self, block_number: i64) -> Result<State>;
+    async fn read_state_after(&self, block_number: i64) -> Result<State>;
     async fn read_states_by_range(
         &self,
         start_block: i64,

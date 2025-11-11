@@ -124,6 +124,16 @@ impl StorageProviderTrait for SqlStorageProvider {
         parse_state_row(row)
     }
 
+    async fn read_state_after(&self, block_number: i64) -> Result<State> {
+        let query = "SELECT block_number, block_hash, root FROM state WHERE block_number > $1 ORDER BY block_number ASC LIMIT 1";
+        let row: Option<(i64, String, String)> = sqlx::query_as(query)
+            .bind(block_number)
+            .fetch_optional(&self.pool)
+            .await?;
+
+        parse_state_row(row)
+    }
+
     async fn read_states_by_range(
         &self,
         start_block: i64,
