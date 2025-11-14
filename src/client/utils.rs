@@ -103,6 +103,102 @@ pub fn find_l1_sub_range(
 mod tests {
     use super::*;
 
+    /// ------------------------------------------------------------
+    /// Tests for as_felt
+    /// ------------------------------------------------------------
+
+    #[test]
+    fn test_as_felt_normal_bytes() {
+        // Normal bytes without leading zeros
+        let bytes = vec![0x12, 0x34, 0x56, 0x78];
+        let felt = as_felt(&bytes).unwrap();
+        assert_eq!(felt.as_ref(), "0x12345678");
+    }
+
+    #[test]
+    fn test_as_felt_with_leading_zeros() {
+        // Bytes with leading zeros should have them stripped
+        let bytes = vec![0x00, 0x00, 0x12, 0x34];
+        let felt = as_felt(&bytes).unwrap();
+        assert_eq!(felt.as_ref(), "0x1234");
+    }
+
+    #[test]
+    fn test_as_felt_all_zeros() {
+        // All zeros should result in "0x0"
+        let bytes = vec![0x00, 0x00, 0x00, 0x00];
+        let felt = as_felt(&bytes).unwrap();
+        assert_eq!(felt.as_ref(), "0x0");
+    }
+
+    #[test]
+    fn test_as_felt_single_zero_byte() {
+        // Single zero byte
+        let bytes = vec![0x00];
+        let felt = as_felt(&bytes).unwrap();
+        assert_eq!(felt.as_ref(), "0x0");
+    }
+
+    #[test]
+    fn test_as_felt_single_non_zero_byte() {
+        // Single non-zero byte
+        let bytes = vec![0x42];
+        let felt = as_felt(&bytes).unwrap();
+        assert_eq!(felt.as_ref(), "0x42");
+    }
+
+    #[test]
+    fn test_as_felt_empty_bytes() {
+        // Empty bytes should result in "0x0"
+        let bytes = vec![];
+        let felt = as_felt(&bytes).unwrap();
+        assert_eq!(felt.as_ref(), "0x0");
+    }
+
+    #[test]
+    fn test_as_felt_mixed_leading_zeros() {
+        // Multiple leading zeros followed by non-zero bytes
+        let bytes = vec![0x00, 0x00, 0x00, 0xab, 0xcd, 0xef];
+        let felt = as_felt(&bytes).unwrap();
+        assert_eq!(felt.as_ref(), "0xabcdef");
+    }
+
+    #[test]
+    fn test_as_felt_large_byte_array() {
+        // Large byte array
+        let bytes = vec![0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0];
+        let felt = as_felt(&bytes).unwrap();
+        assert_eq!(felt.as_ref(), "0x123456789abcdef0");
+    }
+
+    #[test]
+    fn test_as_felt_with_zeros_in_middle() {
+        // Zeros in the middle should be preserved
+        let bytes = vec![0x12, 0x00, 0x34, 0x00];
+        let felt = as_felt(&bytes).unwrap();
+        assert_eq!(felt.as_ref(), "0x12003400");
+    }
+
+    #[test]
+    fn test_as_felt_max_single_byte() {
+        // Maximum single byte value
+        let bytes = vec![0xff];
+        let felt = as_felt(&bytes).unwrap();
+        assert_eq!(felt.as_ref(), "0xff");
+    }
+
+    #[test]
+    fn test_as_felt_leading_zero_followed_by_zero() {
+        // Leading zero followed by more zeros and then a value
+        let bytes = vec![0x00, 0x00, 0x00, 0x01];
+        let felt = as_felt(&bytes).unwrap();
+        assert_eq!(felt.as_ref(), "0x1");
+    }
+
+    /// ------------------------------------------------------------
+    /// Tests for approximate_l1_block
+    /// ------------------------------------------------------------
+
     #[test]
     fn test_approximate_l1_block_same_range() {
         let l1_range = L1Range::new(1, 100, 1, 100);

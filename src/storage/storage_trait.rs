@@ -16,21 +16,6 @@ pub enum StorageError {
     NotFound(String),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Storages {
-    State,
-    L1Range,
-}
-
-impl Storages {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Storages::State => "State",
-            Storages::L1Range => "L1Range",
-        }
-    }
-}
-
 #[async_trait]
 pub trait StorageProviderTrait: Send + Sync + Clone + 'static {
     // l2 state

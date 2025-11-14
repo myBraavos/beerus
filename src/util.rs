@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use bitvec::prelude::{BitSlice, BitVec, Msb0};
 use bitvec::view::BitView;
 use eyre::{eyre, Result};
@@ -40,7 +42,10 @@ where
 {
     const RETRIES: usize = 3;
     const DELAY: u64 = 500; // 0.5 seconds
-    let retry_strategy = ExponentialBackoff::from_millis(DELAY).take(RETRIES);
+    const MAX_DELAY: Duration = Duration::from_secs(3);
+    let retry_strategy = ExponentialBackoff::from_millis(DELAY)
+        .max_delay(MAX_DELAY)
+        .take(RETRIES);
 
     Retry::spawn(retry_strategy, action).await
 }
@@ -50,7 +55,15 @@ mod tests {
     use bitvec::{order::Msb0, slice::BitSlice};
     use starknet_crypto::Felt as FieldElement;
 
-    use super::{felt_from_bits, felt_to_bits};
+    use super::{felt_from_bits, felt_to_bits, with_retry};
+
+    #[test]
+    fn test_felt_from_bits_invalid() {
+        let mut slice = [0u8; 32];
+        let bit_slice = BitSlice::<u8, Msb0>::from_slice_mut(&mut slice);
+        bit_slice.set(250, true);
+        assert!(felt_from_bits(&bit_slice[..250], None).is_err(),);
+    }
 
     #[test]
     fn test_felt_to_bits_three() {
@@ -121,5 +134,64 @@ mod tests {
         let mut slice = [0u8; 32];
         let bit_slice = BitSlice::<u8, Msb0>::from_slice_mut(&mut slice);
         assert!(felt_from_bits(&bit_slice[..251], Some(252)).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_with_retry_success_on_first_attempt() {
+        let result = with_retry(|| async { Ok::<i32, eyre::Error>(42) }).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 42);
+    }
+
+    #[tokio::test]
+    async fn test_with_retry_success_after_retries() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        // Atomic counter so we can increment across tasks/calls safely
+        let counter = Arc::new(AtomicUsize::new(0));
+        let result = {
+            let counter = counter.clone();
+            with_retry(move || {
+                let counter = counter.clone();
+                async move {
+                    counter.fetch_add(1, Ordering::SeqCst);
+                    if counter.load(Ordering::SeqCst) < 2 {
+                        Err(eyre::eyre!("Temporary failure"))
+                    } else {
+                        Ok::<i32, eyre::Error>(42)
+                    }
+                }
+            })
+            .await
+        };
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 42);
+        assert_eq!(counter.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn test_with_retry_failure_after_all_retries() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        // Atomic counter so we can increment across tasks/calls safely
+        let counter = Arc::new(AtomicUsize::new(0));
+
+        let result = {
+            let counter = counter.clone();
+            with_retry(move || {
+                let counter = counter.clone();
+                async move {
+                    counter.fetch_add(1, Ordering::SeqCst);
+                    Err::<i32, eyre::Error>(eyre::eyre!("Persistent failure"))
+                }
+            })
+            .await
+        };
+
+        assert!(result.is_err());
+        // initial attempt + 3 retries = 4 attempts
+        assert_eq!(counter.load(Ordering::SeqCst), 4);
     }
 }

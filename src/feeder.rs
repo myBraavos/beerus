@@ -176,7 +176,37 @@ mod tests {
         Mock, MockServer, ResponseTemplate,
     };
 
+    use crate::r#gen::BlockNumber;
+
     use super::*;
+
+    #[tokio::test]
+    async fn test_invalid_url() -> Result<()> {
+        let result = GatewayClient::new("https://invalid_url.com/");
+        assert!(result.is_err());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_get_state_failure() -> Result<()> {
+        let mock = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/feeder_gateway/get_block"))
+            .and(query_param("blockNumber", "latest"))
+            .respond_with(
+                ResponseTemplate::new(500)
+                    .set_body_string("Internal Server Error"),
+            )
+            .mount(&mock)
+            .await;
+
+        let gateway = GatewayClient::new(mock.uri().as_str())?;
+        let result = gateway
+            .get_state(BlockId::BlockTag(crate::gen::BlockTag::Latest))
+            .await;
+        assert!(result.is_err());
+        Ok(())
+    }
 
     #[tokio::test]
     async fn test_get_state_success() -> Result<()> {
@@ -212,6 +242,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_get_state_success_with_block_number() -> Result<()> {
+        const BLOCK_NUMBER: i64 = 1056427;
+        const BLOCK_HASH: &str =
+            "0x7c7b366f1b31a556ace49e1affe3b4ed3cfb5aa328b85307655ea70dadd0cc6";
+        const STATE_ROOT: &str =
+            "0x33d912445ba4f73ce6d910f3952e722aef1c55ee81278b3039b50243278f561";
+
+        let mock = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/feeder_gateway/get_block"))
+            .and(query_param("blockNumber", BLOCK_NUMBER.to_string()))
+            .respond_with(ResponseTemplate::new(200).set_body_json(
+                serde_json::json!({
+                    "block_number": BLOCK_NUMBER,
+                    "block_hash": BLOCK_HASH,
+                    "state_root": STATE_ROOT,
+                    "status": "ACCEPTED_ON_L2"
+                }),
+            ))
+            .mount(&mock)
+            .await;
+
+        let gateway = GatewayClient::new(mock.uri().as_str())?;
+        let state = gateway
+            .get_state(BlockId::BlockNumber {
+                block_number: BlockNumber::try_new(BLOCK_NUMBER).unwrap(),
+            })
+            .await?;
+
+        assert_eq!(state.block_number, BLOCK_NUMBER);
+        assert_eq!(state.block_hash.as_ref(), BLOCK_HASH);
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_get_signature_success() -> Result<()> {
         const BLOCK_HASH: &str = "0x1234567890abcdef";
         const R: &str = "0xabcdef1234567890";
@@ -235,6 +300,57 @@ mod tests {
 
         assert_eq!(r, R);
         assert_eq!(s, S);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_get_signature_invalid_block_hash() -> Result<()> {
+        const BLOCK_HASH: &str = "0x1234567890abcdef";
+        const R: &str = "0xabcdef1234567890";
+        const S: &str = "0x9876543210fedcba";
+
+        let mock = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/feeder_gateway/get_signature"))
+            .and(query_param("blockHash", BLOCK_HASH))
+            .respond_with(ResponseTemplate::new(200).set_body_json(
+                serde_json::json!({
+                    "block_hash": "0x321",
+                    "signature": [R, S]
+                }),
+            ))
+            .mount(&mock)
+            .await;
+
+        let gateway = GatewayClient::new(mock.uri().as_str())?;
+        let result = gateway.get_signature(BLOCK_HASH).await;
+        assert!(result.is_err());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_get_signature_invalid_signature() -> Result<()> {
+        const BLOCK_HASH: &str = "0x1234567890abcdef";
+        const R: &str = "0xabcdef1234567890";
+
+        let mock = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/feeder_gateway/get_signature"))
+            .and(query_param("blockHash", BLOCK_HASH))
+            .respond_with(ResponseTemplate::new(200).set_body_json(
+                serde_json::json!({
+                    "block_hash": BLOCK_HASH,
+                    "signature": [R]
+                }),
+            ))
+            .mount(&mock)
+            .await;
+
+        let gateway = GatewayClient::new(mock.uri().as_str())?;
+        let result = gateway.get_signature(BLOCK_HASH).await;
+        assert!(result.is_err());
+
         Ok(())
     }
 
