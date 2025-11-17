@@ -768,3 +768,214 @@ impl<
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::storage::mock_storage_provider::MockStorageProvider;
+
+    use super::*;
+    use wiremock::{
+        matchers::{method, body_string_contains},
+        Mock, MockServer, ResponseTemplate,
+    };
+
+    fn get_mock_config(mock_url: String) -> Config {
+        Config {
+            eth_rpc: mock_url.clone(),
+            starknet_rpc: mock_url.clone(),
+            gateway_url: mock_url,
+            database_url: "".to_string(),
+            l2_rate_limit: 10,
+            l1_range_blocks: 9,
+        }
+    }
+
+    async fn mock_spec_version_response(mock: &MockServer) {
+        Mock::given(method("POST"))
+            .and(body_string_contains("starknet_specVersion"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "result": "0.8.1",
+                    "id": 0
+                }),
+            ))
+            .mount(mock)
+            .await;
+    }
+
+    async fn mock_get_block_with_receipts_response(mock: &MockServer) {
+        Mock::given(method("POST"))
+            .and(body_string_contains("starknet_getBlockWithReceipts"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "result": {
+                        "status": "ACCEPTED_ON_L2",
+                        "block_hash": "0x1a3ef8f9469ee2f4612717b1b6fb1314c82d8267ae175b71e218b1123294947",
+                        "parent_hash": "0x456",
+                        "block_number": 100,
+                        "new_root": "0x5bc87df12fc2a96a350c31cf8b93601c3b33521879df49a107a426e36b71e68",
+                        "timestamp": 1763114861,
+                        "sequencer_address": "0x1176a1bd84444c89232ec27754698e5d2e7e1a7f1539f12027f28b23ec9f3d8",
+                        "l1_gas_price": {
+                            "price_in_fri": "0x1c5b3206b3c9",
+                            "price_in_wei": "0x515ba424"
+                        },
+                        "l1_data_gas_price": {
+                            "price_in_fri": "0xfaf24",
+                            "price_in_wei": "0x2d"
+                        },
+                        "l1_da_mode": "BLOB",
+                        "starknet_version": "0.14.0",
+                        "l2_gas_price": {
+                            "price_in_fri": "0xb2d05e00",
+                            "price_in_wei": "0x2010a"
+                        },
+                        "transactions": []
+                    },
+                    "id": 0
+                }),
+            ))
+            .mount(mock)
+            .await;
+    }
+
+    async fn mock_get_state_update_response(mock: &MockServer) {
+        Mock::given(method("POST"))
+            .and(body_string_contains("starknet_getStateUpdate"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "result": {
+                        "block_hash": "0x1a3ef8f9469ee2f4612717b1b6fb1314c82d8267ae175b71e218b1123294947",
+                        "new_root": "0x5bc87df12fc2a96a350c31cf8b93601c3b33521879df49a107a426e36b71e68",
+                        "old_root": "0x5340acb42e122c008dc3102168d560f0a71c38ef6f86af27ab2ad029d8f3acd",
+                        "state_diff": {
+                            "storage_diffs": [],
+                            "nonces": [],
+                            "deployed_contracts": [],
+                            "deprecated_declared_classes": [],
+                            "declared_classes": [],
+                            "replaced_classes": []
+                        }
+                    },
+                    "id": 0
+                }),
+            ))
+            .mount(mock)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn test_unsupported_rpc() {
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(body_string_contains("starknet_specVersion"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "result": "0.7.1",
+                    "id": 0
+                }),
+            ))
+            .mount(&mock)
+            .await;
+
+        let config = get_mock_config(mock.uri());
+
+        let storage = Arc::new(MockStorageProvider{});
+        let client = Client::new(&config, Http::new(), storage).await;
+
+        assert!(client.is_err(), "Expected error for unsupported RPC spec version");
+    }
+
+    #[tokio::test]
+    async fn test_get_verified_state() {
+        let block_hash = Felt::try_new("0x1a3ef8f9469ee2f4612717b1b6fb1314c82d8267ae175b71e218b1123294947").unwrap();
+        let prev_block_hash = Felt::try_new("0x456").unwrap();
+
+        let mock = MockServer::start().await;
+        mock_spec_version_response(&mock).await;
+        mock_get_block_with_receipts_response(&mock).await;
+        mock_get_state_update_response(&mock).await;
+
+        let config = get_mock_config(mock.uri());
+        let storage = Arc::new(MockStorageProvider{});
+        let client = Client::new(&config, Http::new(), storage).await.unwrap();
+
+        let result = client.get_verified_state(&block_hash, Some(prev_block_hash)).await;
+        assert!(result.is_ok(), "Expected successful state verification");
+        let state = result.unwrap();
+        assert_eq!(state.block_number, 100);
+        assert_eq!(state.block_hash, block_hash);
+    }
+
+    #[tokio::test]
+    async fn test_get_verified_state_invalid_prev_block_hash() {
+        let block_hash = Felt::try_new("0x1a3ef8f9469ee2f4612717b1b6fb1314c82d8267ae175b71e218b1123294947").unwrap();
+        let prev_block_hash = Felt::try_new("0x321").unwrap();
+
+        let mock = MockServer::start().await;
+        mock_spec_version_response(&mock).await;
+        mock_get_block_with_receipts_response(&mock).await;
+        mock_get_state_update_response(&mock).await;
+
+        let config = get_mock_config(mock.uri());
+        let storage = Arc::new(MockStorageProvider{});
+        let client = Client::new(&config, Http::new(), storage).await.unwrap();
+
+        let result = client.get_verified_state(&block_hash, Some(prev_block_hash)).await;
+        assert!(result.unwrap_err().to_string().contains("Prev block hash mismatch"), "Expected prev block hash mismatch error");
+    }
+
+    #[tokio::test]
+    async fn test_get_verified_state_invalid_unsupported_starknet_version() {
+        let block_hash = Felt::try_new("0x1a3ef8f9469ee2f4612717b1b6fb1314c82d8267ae175b71e218b1123294947").unwrap();
+
+        let mock = MockServer::start().await;
+        mock_spec_version_response(&mock).await;
+        Mock::given(method("POST"))
+            .and(body_string_contains("starknet_getBlockWithReceipts"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "result": {
+                        "status": "ACCEPTED_ON_L2",
+                        "block_hash": "0x1a3ef8f9469ee2f4612717b1b6fb1314c82d8267ae175b71e218b1123294947",
+                        "parent_hash": "0x456",
+                        "block_number": 100,
+                        "new_root": "0x5bc87df12fc2a96a350c31cf8b93601c3b33521879df49a107a426e36b71e68",
+                        "timestamp": 1763114861,
+                        "sequencer_address": "0x1176a1bd84444c89232ec27754698e5d2e7e1a7f1539f12027f28b23ec9f3d8",
+                        "l1_gas_price": {
+                            "price_in_fri": "0x1c5b3206b3c9",
+                            "price_in_wei": "0x515ba424"
+                        },
+                        "l1_data_gas_price": {
+                            "price_in_fri": "0xfaf24",
+                            "price_in_wei": "0x2d"
+                        },
+                        "l1_da_mode": "BLOB",
+                        "starknet_version": "0.15.0",
+                        "l2_gas_price": {
+                            "price_in_fri": "0xb2d05e00",
+                            "price_in_wei": "0x2010a"
+                        },
+                        "transactions": []
+                    },
+                    "id": 0
+                }),
+            ))
+            .mount(&mock)
+            .await;
+        mock_get_state_update_response(&mock).await;
+
+        let config = get_mock_config(mock.uri());
+        let storage = Arc::new(MockStorageProvider{});
+        let client = Client::new(&config, Http::new(), storage).await.unwrap();
+
+        let result = client.get_verified_state(&block_hash, None).await;
+        assert!(result.unwrap_err().to_string().contains("Unsupported starknet version"), "Expected unsupported starknet version error");
+    }
+}
