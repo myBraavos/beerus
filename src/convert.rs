@@ -34,9 +34,16 @@ impl ToCairo for GenContractClass {
 }
 
 // Implement From trait for compatibility with existing code
-impl From<GenContractClass> for CairoContractClass {
-    fn from(gen_class: GenContractClass) -> Self {
-        gen_class.to_cairo().expect("Failed to convert ContractClass")
+impl TryFrom<GenContractClass> for CairoContractClass {
+    type Error = crate::exe::err::Error;
+
+    fn try_from(gen_class: GenContractClass) -> Result<Self, Self::Error> {
+        gen_class.to_cairo().map_err(|e| {
+            crate::exe::err::Error::IamGroot(iamgroot::jsonrpc::Error::new(
+                32101,
+                format!("conversion failed: {e:?}"),
+            ))
+        })
     }
 }
 
@@ -156,22 +163,21 @@ mod tests {
     }
 
     #[test]
-    fn test_from_trait_implementation() {
+    fn test_try_from_trait_implementation() {
         let gen_class = create_minimal_contract_class();
-        let result = CairoContractClass::from(gen_class);
+        let result = CairoContractClass::try_from(gen_class).unwrap();
         // If we get here without panicking, the conversion succeeded
         let _ = result; // Use the result to avoid unused variable warning
     }
 
     #[test]
-    #[should_panic(expected = "Failed to convert ContractClass")]
-    fn test_from_trait_implementation_panics_on_error() {
+    fn test_try_from_trait_implementation_with_error() {
         let mut gen_class = create_minimal_contract_class();
         // Create an invalid contract class that will fail conversion
         gen_class.contract_class_version = "".to_string();
         // This might not panic, so let's try with invalid ABI instead
         gen_class.abi = Some("invalid json".to_string());
-        let _ = CairoContractClass::from(gen_class);
+        assert!(CairoContractClass::try_from(gen_class).is_err());
     }
 
     #[test]

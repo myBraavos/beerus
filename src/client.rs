@@ -31,7 +31,7 @@ pub use state::State;
 pub use utils::as_felt;
 
 const MIN_RPC_SPEC_VERSION: &str = "0.8.1";
-const MAX_STARKNET_VERSION: &str = "0.14.0";
+const MAX_STARKNET_VERSION: &str = "0.14.1";
 pub const FIRST_SUPPORTED_BLOCK_NUMBER: i64 = 1_000_000;
 
 type L1LockMap = Arc<RwLock<HashMap<(i64, i64), Arc<Mutex<()>>>>>;
@@ -135,13 +135,17 @@ impl<
         );
         let call_info =
             crate::exe::call(client, request, state, self.rate_limiter())?;
-        call_info
+        let result = call_info
             .execution
             .retdata
             .0
             .into_iter()
             .map(|felt| as_felt(&felt.to_bytes_be()))
-            .collect()
+            .collect::<Result<Vec<Felt>, eyre::Error>>()?;
+        if call_info.execution.failed {
+            eyre::bail!("Call failed: {:?}", result);
+        }
+        Ok(result)
     }
 
     // Get minimal state from feeder gateway
@@ -775,7 +779,7 @@ mod tests {
 
     use super::*;
     use wiremock::{
-        matchers::{method, body_string_contains},
+        matchers::{body_string_contains, method},
         Mock, MockServer, ResponseTemplate,
     };
 
@@ -884,15 +888,21 @@ mod tests {
 
         let config = get_mock_config(mock.uri());
 
-        let storage = Arc::new(MockStorageProvider{});
+        let storage = Arc::new(MockStorageProvider {});
         let client = Client::new(&config, Http::new(), storage).await;
 
-        assert!(client.is_err(), "Expected error for unsupported RPC spec version");
+        assert!(
+            client.is_err(),
+            "Expected error for unsupported RPC spec version"
+        );
     }
 
     #[tokio::test]
     async fn test_get_verified_state() {
-        let block_hash = Felt::try_new("0x1a3ef8f9469ee2f4612717b1b6fb1314c82d8267ae175b71e218b1123294947").unwrap();
+        let block_hash = Felt::try_new(
+            "0x1a3ef8f9469ee2f4612717b1b6fb1314c82d8267ae175b71e218b1123294947",
+        )
+        .unwrap();
         let prev_block_hash = Felt::try_new("0x456").unwrap();
 
         let mock = MockServer::start().await;
@@ -901,10 +911,11 @@ mod tests {
         mock_get_state_update_response(&mock).await;
 
         let config = get_mock_config(mock.uri());
-        let storage = Arc::new(MockStorageProvider{});
+        let storage = Arc::new(MockStorageProvider {});
         let client = Client::new(&config, Http::new(), storage).await.unwrap();
 
-        let result = client.get_verified_state(&block_hash, Some(prev_block_hash)).await;
+        let result =
+            client.get_verified_state(&block_hash, Some(prev_block_hash)).await;
         assert!(result.is_ok(), "Expected successful state verification");
         let state = result.unwrap();
         assert_eq!(state.block_number, 100);
@@ -913,7 +924,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_verified_state_invalid_prev_block_hash() {
-        let block_hash = Felt::try_new("0x1a3ef8f9469ee2f4612717b1b6fb1314c82d8267ae175b71e218b1123294947").unwrap();
+        let block_hash = Felt::try_new(
+            "0x1a3ef8f9469ee2f4612717b1b6fb1314c82d8267ae175b71e218b1123294947",
+        )
+        .unwrap();
         let prev_block_hash = Felt::try_new("0x321").unwrap();
 
         let mock = MockServer::start().await;
@@ -922,16 +936,26 @@ mod tests {
         mock_get_state_update_response(&mock).await;
 
         let config = get_mock_config(mock.uri());
-        let storage = Arc::new(MockStorageProvider{});
+        let storage = Arc::new(MockStorageProvider {});
         let client = Client::new(&config, Http::new(), storage).await.unwrap();
 
-        let result = client.get_verified_state(&block_hash, Some(prev_block_hash)).await;
-        assert!(result.unwrap_err().to_string().contains("Prev block hash mismatch"), "Expected prev block hash mismatch error");
+        let result =
+            client.get_verified_state(&block_hash, Some(prev_block_hash)).await;
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Prev block hash mismatch"),
+            "Expected prev block hash mismatch error"
+        );
     }
 
     #[tokio::test]
     async fn test_get_verified_state_invalid_unsupported_starknet_version() {
-        let block_hash = Felt::try_new("0x1a3ef8f9469ee2f4612717b1b6fb1314c82d8267ae175b71e218b1123294947").unwrap();
+        let block_hash = Felt::try_new(
+            "0x1a3ef8f9469ee2f4612717b1b6fb1314c82d8267ae175b71e218b1123294947",
+        )
+        .unwrap();
 
         let mock = MockServer::start().await;
         mock_spec_version_response(&mock).await;
@@ -972,10 +996,16 @@ mod tests {
         mock_get_state_update_response(&mock).await;
 
         let config = get_mock_config(mock.uri());
-        let storage = Arc::new(MockStorageProvider{});
+        let storage = Arc::new(MockStorageProvider {});
         let client = Client::new(&config, Http::new(), storage).await.unwrap();
 
         let result = client.get_verified_state(&block_hash, None).await;
-        assert!(result.unwrap_err().to_string().contains("Unsupported starknet version"), "Expected unsupported starknet version error");
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Unsupported starknet version"),
+            "Expected unsupported starknet version error"
+        );
     }
 }

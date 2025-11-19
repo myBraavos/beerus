@@ -1,4 +1,5 @@
 pub use gen::*;
+use starknet_api::{block::GasPrice, execution_resources::GasAmount};
 
 // TODO: must be handled in iamgroot
 #[allow(clippy::needless_return)]
@@ -431,7 +432,18 @@ pub mod gen {
         #[serde(skip_serializing_if = "Option::is_none")]
         #[serde(default)]
         pub segment_arena_builtin: Option<i64>,
-        pub steps: i64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
+        pub steps: Option<i64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
+        pub l1_data_gas: Option<i64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
+        pub l1_gas: Option<i64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
+        pub l2_gas: Option<i64>,
     }
 
     type ContractAbi = Vec<ContractAbiEntry>;
@@ -989,8 +1001,30 @@ pub mod gen {
         #[serde(skip_serializing_if = "Option::is_none")]
         #[serde(default)]
         pub data_gas_price: Option<Felt>,
-        pub gas_consumed: Felt,
-        pub gas_price: Felt,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
+        pub gas_consumed: Option<Felt>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
+        pub gas_price: Option<Felt>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
+        pub l1_gas_consumed: Option<Felt>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
+        pub l1_gas_price: Option<Felt>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
+        pub l2_gas_consumed: Option<Felt>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
+        pub l2_gas_price: Option<Felt>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
+        pub l1_data_gas_consumed: Option<Felt>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
+        pub l1_data_gas_price: Option<Felt>,
         pub overall_fee: Felt,
         pub unit: PriceUnit,
     }
@@ -1112,6 +1146,9 @@ pub mod gen {
         pub execution_resources: ComputationResources,
         pub messages: Vec<OrderedMessage>,
         pub result: Vec<Felt>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
+        pub is_reverted: Option<bool>,
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -1395,7 +1432,7 @@ pub mod gen {
         #[serde(default)]
         pub order: Option<i64>,
         #[serde(flatten)]
-        pub event: Event,
+        pub event: EventContent,
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -1541,6 +1578,7 @@ pub mod gen {
     pub struct ResourceBoundsMapping {
         pub l1_gas: ResourceBounds,
         pub l2_gas: ResourceBounds,
+        pub l1_data_gas: ResourceBounds,
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -8964,8 +9002,8 @@ impl TryFrom<BlockHeader> for starknet_api::block::BlockHeaderWithoutHash {
         };
 
         // NOTE: those fields are not used in hash calculation so we skip them
-        let l2_gas_consumed = 0;
-        let next_l2_gas_price = 0;
+        let l2_gas_consumed = GasAmount::ZERO;
+        let next_l2_gas_price = GasPrice(0);
 
         Ok(Self {
             parent_hash: starknet_api::block::BlockHash(
@@ -9178,6 +9216,7 @@ impl TryFrom<StateDiff> for starknet_api::state::ThinStateDiff {
             deprecated_declared_classes,
             nonces,
             storage_diffs,
+            migrated_compiled_classes: IndexMap::new(), // TODO: implement this
         };
         Ok(ThinStateDiff::from(state_diff))
     }
@@ -9203,6 +9242,7 @@ impl TryFrom<TransactionAndReceipt>
                 TransactionExecutionStatus, TransactionHash,
             },
         };
+        use std::sync::Arc;
 
         let signature: Vec<Felt> = match transaction_and_receipt.transaction {
             Txn::InvokeTxn(invoke_txn) => match invoke_txn {
@@ -9360,14 +9400,14 @@ impl TryFrom<TransactionAndReceipt>
         };
 
         Ok(Self {
-            transaction_signature: TransactionSignature(
+            transaction_signature: TransactionSignature(Arc::new(
                 signature
                     .into_iter()
                     .map(|signature_item| {
                         StarkHash::from_hex_unchecked(signature_item.as_ref())
                     })
                     .collect::<Vec<StarkHash>>(),
-            ),
+            )),
             transaction_output,
             transaction_hash: TransactionHash(StarkHash::from_hex_unchecked(
                 common_receipt_properties.transaction_hash.0.as_ref(),

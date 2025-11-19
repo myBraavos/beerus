@@ -114,6 +114,7 @@ impl ExecutionContextBuilder {
         };
 
         let chain_info = ChainInfo {
+            is_l3: false,
             chain_id: self.chain_id,
             fee_token_addresses: FeeTokenAddresses {
                 strk_fee_token_address: ContractAddress::default(),
@@ -136,10 +137,10 @@ impl ExecutionContextBuilder {
             common_fields: CommonAccountFields {
                 transaction_hash: TransactionHash::default(),
                 version: TransactionVersion(StarkFelt::ONE),
-                signature: TransactionSignature(vec![
+                signature: TransactionSignature(Arc::new(vec![
                     StarkHash::ZERO,
                     StarkHash::ZERO,
-                ]),
+                ])),
                 nonce: Nonce(StarkHash::ZERO),
                 sender_address: ContractAddress::default(),
                 only_query: true,

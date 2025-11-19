@@ -144,24 +144,19 @@ impl<T: gen::client::blocking::HttpClient> StateReader for StateProxy<T> {
                     contract_class.contract_class_version.parse().map_err(
                         |_| Error::Custom("Failed to parse SierraVersion"),
                     )?;
-                let casm_class = cairo_lang_starknet_classes::casm_contract_class::CasmContractClass::from_contract_class(contract_class.into(), true, u32::MAX as usize)
+                let casm_class = cairo_lang_starknet_classes::casm_contract_class::CasmContractClass::from_contract_class(contract_class.try_into()?, true, u32::MAX as usize)
                     .map_err(|_| Error::Custom("Failed to convert Sierra program"))?;
                 starknet_api::contract_class::ContractClass::V1((
                     casm_class,
                     sierra_version,
                 ))
             }
-            // TODO: add cairo 0 support
-            //     deprecated_contract_class
-            //     // let deprecated: blockifier::execution::contract_class::ContractClassV0 =
-            //     //     deprecated_contract_class.try_into().map_err(|_| Error::Custom("Failed to convert DeprecatedContractClass"))?;
-            //     // ContractClass::V0(deprecated_contract_class)
-            // }
-            _ => {
-                return Err(Error::Custom(
-                    "Failed to convert DeprecatedContractClass",
-                )
-                .into())
+            gen::GetClassResult::DeprecatedContractClass(
+                deprecated_contract_class,
+            ) => {
+                let deprecated: starknet_api::deprecated_contract_class::ContractClass =
+                    deprecated_contract_class.try_into()?;
+                starknet_api::contract_class::ContractClass::V0(deprecated)
             }
         };
         let runnable_compiled_class =

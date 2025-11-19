@@ -139,6 +139,10 @@ mod tests {
                     max_amount : U64::try_new("0x23f4a3ec").unwrap(),
                     max_price_per_unit : U128::try_new("0x10c388d00").unwrap(),
                 },
+                l1_data_gas : ResourceBounds{
+                    max_amount : U64::try_new("0x0").unwrap(),
+                    max_price_per_unit : U128::try_new("0x0").unwrap(),
+                },
             },
             tip : U64::try_new("0x55d4a80").unwrap(),
             paymaster_data : vec ![],
@@ -454,6 +458,10 @@ mod tests {
                     max_amount : U64::try_new("0x48a92c0").unwrap(),
                     max_price_per_unit : U128::try_new("0x1bf08eb00").unwrap(),
                 },
+                l1_data_gas : ResourceBounds{
+                    max_amount : U64::try_new("0x0").unwrap(),
+                    max_price_per_unit : U128::try_new("0x0").unwrap(),
+                },
             },
             tip : U64::try_new("0x1").unwrap(),
             paymaster_data : vec ![],
@@ -702,6 +710,10 @@ mod tests {
                 l2_gas : ResourceBounds{
                     max_amount : U64::try_new("0x3d46220").unwrap(),
                     max_price_per_unit : U128::try_new("0x1bf08eb00").unwrap(),
+                },
+                l1_data_gas : ResourceBounds{
+                    max_amount : U64::try_new("0x0").unwrap(),
+                    max_price_per_unit : U128::try_new("0x0").unwrap(),
                 },
             },
             tip : U64::try_new("0x1").unwrap(),
