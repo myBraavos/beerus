@@ -139,7 +139,7 @@ impl TryFrom<gen::DeprecatedContractClass>
                 .into_iter()
                 .map(|entry| {
                     let json = serde_json::to_value(&entry)?;
-                    serde_json::from_value(json).map_err(|e| Error::Serde(e))
+                    serde_json::from_value(json).map_err(Error::Serde)
                 })
                 .collect();
             Some(converted_abi?)

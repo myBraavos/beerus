@@ -8,7 +8,7 @@ use crate::background_loader::async_blocker::AsyncBlocker;
 use crate::client::block_hash::validate_block_hash;
 use crate::client::l1_range::L1Range;
 use crate::client::rate_limiter::RateLimiter;
-use crate::client::state::GatewayState;
+use crate::client::state::{GatewayState, L1State};
 use crate::client::utils::{approximate_l1_block, find_l1_sub_range};
 use crate::config::Config;
 use crate::eth::core_contract::L1CoreContract;
@@ -240,6 +240,7 @@ impl<
         // Step 6: Construct local minimal state and persist it.
         let state = State::new(
             *block.block_header.block_number.as_ref(),
+            *block.block_header.timestamp.as_ref(),
             block.block_header.block_hash.0,
             block.block_header.new_root,
         );
@@ -372,6 +373,7 @@ impl<
         for block in results {
             let state = State::new(
                 *block.block_header.block_number.as_ref(),
+                *block.block_header.timestamp.as_ref(),
                 block.block_header.block_hash.0,
                 block.block_header.new_root,
             );
@@ -537,8 +539,12 @@ impl<
             );
             // This function verifies all L2 blocks between start_state and end_state,
             // storing them to persistent storage, including the target state.
-            self.verify_state_range(target_state.clone(), end_state, None)
-                .await?;
+            self.verify_state_range(
+                target_state.clone(),
+                end_state.into(),
+                None,
+            )
+            .await?;
         };
 
         // Persist the state of the target block after verification is done
@@ -568,7 +574,7 @@ impl<
         &self,
         mut l1_range: L1Range,
         block_number: i64,
-    ) -> Result<State> {
+    ) -> Result<L1State> {
         // Check if the block number coincides with the start or end of the L1 range.
         // In that case, fetch and return the corresponding state immediately.
         if block_number == l1_range.l2_start {
@@ -690,7 +696,7 @@ impl<
             self.storage().read_state_after(block_number).await;
         if let Ok(end_state_from_storage) = end_state_from_storage {
             if end_state_from_storage.block_number <= l1_range.l2_end {
-                return Ok(end_state_from_storage);
+                return Ok(end_state_from_storage.into());
             }
         }
         self.l1()
@@ -718,7 +724,10 @@ impl<
     /// 3. Otherwise, begins searching for the new L1 range by querying for state updates in descending blocks.
     /// 4. Iteratively halves the search window downward until it locates an event containing the appropriate state update.
     /// 5. Updates and persists the new range in storage.
-    pub async fn store_latest_l1_range(&self, l1_state: &State) -> Result<()> {
+    pub async fn store_latest_l1_range(
+        &self,
+        l1_state: &L1State,
+    ) -> Result<()> {
         // Get the latest L1 range stored in persistent storage.
         let latest_l1_range = self.storage().read_latest_l1_range().await?;
         // If the provided state is already within the latest available L1 range, no update is necessary.

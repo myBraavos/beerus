@@ -25,6 +25,8 @@ impl AsyncBlocker {
     ///
     /// Usage:
     /// ```
+    /// use beerus::background_loader::async_blocker::AsyncBlocker;
+    /// let async_blocker = AsyncBlocker::new();
     /// let _guard = async_blocker.block_tasks();
     /// // do something
     /// ```

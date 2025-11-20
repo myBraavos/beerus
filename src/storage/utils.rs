@@ -5,10 +5,13 @@ use crate::{
 };
 use eyre::Result;
 
-pub fn parse_state_row(row: Option<(i64, String, String)>) -> Result<State> {
+pub fn parse_state_row(
+    row: Option<(i64, i64, String, String)>,
+) -> Result<State> {
     match row {
-        Some((block_number, block_hash, root)) => Ok(State::new(
+        Some((block_number, timestamp, block_hash, root)) => Ok(State::new(
             block_number,
+            timestamp,
             Felt::try_new(&block_hash).map_err(StorageError::Serde)?,
             Felt::try_new(&root).map_err(StorageError::Serde)?,
         )),
@@ -39,13 +42,19 @@ mod tests {
     #[test]
     fn test_parse_state_row_success() {
         let block_number = 12345;
+        let timestamp = 1732118400;
         let block_hash = "0x1";
         let root = "0x2";
-        let row =
-            Some((block_number, block_hash.to_string(), root.to_string()));
+        let row = Some((
+            block_number,
+            timestamp,
+            block_hash.to_string(),
+            root.to_string(),
+        ));
 
         let result = parse_state_row(row).unwrap();
         assert_eq!(result.block_number, block_number);
+        assert_eq!(result.timestamp, timestamp);
         assert_eq!(result.block_hash.as_ref(), block_hash);
         assert_eq!(result.root.as_ref(), root);
     }
@@ -72,10 +81,15 @@ mod tests {
     #[test]
     fn test_parse_state_row_invalid_block_hash() {
         let block_number = 12345;
+        let timestamp = 1732118400;
         let invalid_hash = "invalid_hash";
         let root = "0x2";
-        let row =
-            Some((block_number, invalid_hash.to_string(), root.to_string()));
+        let row = Some((
+            block_number,
+            timestamp,
+            invalid_hash.to_string(),
+            root.to_string(),
+        ));
 
         let result = parse_state_row(row);
         assert!(result.is_err());
@@ -86,10 +100,12 @@ mod tests {
     #[test]
     fn test_parse_state_row_invalid_root() {
         let block_number = 12345;
+        let timestamp = 1732118400;
         let block_hash = "0x1";
         let invalid_root = "invalid_root";
         let row = Some((
             block_number,
+            timestamp,
             block_hash.to_string(),
             invalid_root.to_string(),
         ));
@@ -103,10 +119,15 @@ mod tests {
     #[test]
     fn test_parse_state_row_with_zero_values() {
         let block_number = 0;
+        let timestamp = 0;
         let block_hash = "0x0";
         let root = "0x0";
-        let row =
-            Some((block_number, block_hash.to_string(), root.to_string()));
+        let row = Some((
+            block_number,
+            timestamp,
+            block_hash.to_string(),
+            root.to_string(),
+        ));
 
         let result = parse_state_row(row).unwrap();
         assert_eq!(result.block_number, block_number);
@@ -117,12 +138,17 @@ mod tests {
     #[test]
     fn test_parse_state_row_with_large_values() {
         let block_number = i64::MAX;
+        let timestamp = i64::MAX;
         // Valid Felt value (max 63 hex chars after 0x, first char must be 1-9 or a-f)
         let block_hash =
             "0x7ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
         let root = "0x1a2b3c4d5e6f";
-        let row =
-            Some((block_number, block_hash.to_string(), root.to_string()));
+        let row = Some((
+            block_number,
+            timestamp,
+            block_hash.to_string(),
+            root.to_string(),
+        ));
 
         let result = parse_state_row(row).unwrap();
         assert_eq!(result.block_number, block_number);

@@ -156,6 +156,12 @@ impl ExecutionContextBuilder {
 }
 
 /// Create a default execution context for query operations
-pub fn create_query_context() -> Result<TransactionContext, Error> {
-    ExecutionContextBuilder::new().for_query()
+pub fn create_query_context(
+    block_number: u64,
+    block_timestamp: u64,
+) -> Result<TransactionContext, Error> {
+    ExecutionContextBuilder::new()
+        .block_number(StarknetBlockNumber(block_number))
+        .block_timestamp(BlockTimestamp(block_timestamp))
+        .for_query()
 }

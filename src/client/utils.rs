@@ -1,5 +1,5 @@
 use crate::{
-    client::{l1_range::L1Range, State},
+    client::{l1_range::L1Range, state::L1State},
     gen::Felt,
 };
 use eyre::Result;
@@ -34,11 +34,11 @@ pub fn approximate_l1_block(
 
 pub fn find_l1_sub_range(
     full_l1_range: L1Range,
-    states: &[(State, u64)],
+    states: &[(L1State, u64)],
     target_block_number: i64,
     new_l1_ranges: &mut Vec<L1Range>,
 ) -> Result<(Option<L1Range>, bool)> {
-    let mut prev_state: Option<(State, u64)> = None;
+    let mut prev_state: Option<(L1State, u64)> = None;
     let mut target_sub_range: Option<L1Range> = None;
     let mut is_target_below_range = false;
 
@@ -236,16 +236,16 @@ mod tests {
     /// Tests for find_l1_sub_range
     /// ------------------------------------------------------------
 
-    // Helper function to create a State for testing
-    fn create_state(block_number: i64) -> State {
+    // Helper function to create a L1State for testing
+    fn create_state(block_number: i64) -> L1State {
         let hash = Felt::try_new(&format!("0x{:064x}", block_number)).unwrap();
-        State::new(block_number, hash.clone(), hash)
+        L1State::new(block_number, hash.clone(), hash)
     }
 
     #[test]
     fn test_find_l1_sub_range_empty_states() {
         let full_l1_range = L1Range::new(10, 100, 100, 200);
-        let states: Vec<(State, u64)> = vec![];
+        let states: Vec<(L1State, u64)> = vec![];
         let target_block_number = 150;
         let mut new_l1_ranges = Vec::new();
 

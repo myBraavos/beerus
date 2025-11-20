@@ -1,7 +1,7 @@
 use crate::background_loader::async_blocker::AsyncBlocker;
 use crate::client::l1_range::L1Range;
+use crate::client::state::L1State;
 use crate::client::Client;
-use crate::client::State;
 use crate::client::FIRST_SUPPORTED_BLOCK_NUMBER;
 use crate::storage::storage_trait::StorageProviderTrait;
 use eyre::Result;
@@ -87,7 +87,7 @@ impl<S: StorageProviderTrait> BackgroundLoader<S> {
         };
 
         let mut new_l1_ranges: Vec<L1Range> = vec![];
-        let mut prev_state: Option<(State, u64)> = None;
+        let mut prev_state: Option<(L1State, u64)> = None;
         let mut l1_block_start = l1_range.l1_start as u64;
         let mut l1_block_end = l1_range
             .next_end(l1_block_start, self.client.config().l1_range_blocks);
@@ -112,7 +112,6 @@ impl<S: StorageProviderTrait> BackgroundLoader<S> {
                         state.block_number,
                     ));
                 }
-                self.client.storage().write_state(&state).await?;
                 prev_state = Some((state, l1_block_number));
             }
 
@@ -162,22 +161,18 @@ impl<S: StorageProviderTrait> BackgroundLoader<S> {
                     .storage()
                     .read_l1_range(midnight_block_end)
                     .await?;
+                let gateway_state =
+                    self.client.get_gateway_state(l1_range.l2_start).await?;
                 let start_state = self
                     .client
-                    .l1()
-                    .get_state_on_block(l1_range.l2_start)
-                    .await?
-                    .ok_or(eyre::eyre!("Start midnight state not found"))?;
-                let end_state = self
-                    .client
-                    .l1()
-                    .get_state_on_block(l1_range.l2_end)
-                    .await?
-                    .ok_or(eyre::eyre!("End midnight state not found"))?;
+                    .get_verified_state(&gateway_state.block_hash, None)
+                    .await?;
+                let end_state =
+                    self.client.get_gateway_state(l1_range.l2_end).await?;
                 self.client
                     .verify_state_range(
                         start_state,
-                        end_state,
+                        end_state.into(),
                         Some(self.async_blocker.clone()),
                     )
                     .await?;

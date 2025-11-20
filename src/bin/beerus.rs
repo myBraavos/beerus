@@ -147,9 +147,10 @@ async fn prepare_main_loop(
     let l1_state = beerus.l1().get_l1_state().await?;
     // Decide sync starting point: if L1 head is ahead of L2, start from there, else use last L2.
     let mut verified_state = if l1_state.block_number > latest_stored_block {
-        beerus.storage().write_state(&l1_state).await?;
+        let state =
+            beerus.get_verified_state(&l1_state.block_hash, None).await?;
         beerus.store_latest_l1_range(&l1_state).await?;
-        l1_state
+        state
     } else {
         latest_stored_state?
     };

@@ -68,7 +68,11 @@ impl<T: gen::client::blocking::HttpClient + Clone> CallExecutor<T> {
         let entry_point_selector: StarkFelt =
             StarkFelt::try_from(entry_point_selector)?;
 
-        let tx_context = Arc::new(create_query_context()?);
+        let tx_context = Arc::new(create_query_context(
+            self.state.block_number as u64,
+            self.state.timestamp as u64,
+        )?);
+
         let limit_steps_by_resources = false;
         let mut context = EntryPointExecutionContext::new(
             tx_context.clone(),

@@ -7,7 +7,7 @@ use alloy::{
 };
 use eyre::Result;
 
-use crate::client::State;
+use crate::client::state::L1State;
 
 const CORE_CONTRACT_ADDRESS: Address =
     address!("0xc662c410c0ecf747543f5ba90660f6abebd9c8c4");
@@ -31,7 +31,7 @@ impl L1CoreContract {
         Self { rpc_url: rpc_url.to_string() }
     }
 
-    pub async fn get_l1_state(&self) -> Result<State> {
+    pub async fn get_l1_state(&self) -> Result<L1State> {
         let provider =
             ProviderBuilder::new().connect_http(self.rpc_url.parse()?);
 
@@ -45,7 +45,7 @@ impl L1CoreContract {
 
         let (root, block_number, block_hash) = multicall.aggregate().await?;
 
-        Ok(State::new(
+        Ok(L1State::new(
             block_number.as_i64(),
             block_hash.try_into()?,
             root.try_into()?,
@@ -56,7 +56,7 @@ impl L1CoreContract {
         &self,
         start_block: u64,
         end_block: u64,
-    ) -> Result<Vec<(State, u64)>> {
+    ) -> Result<Vec<(L1State, u64)>> {
         let provider =
             ProviderBuilder::new().connect_http(self.rpc_url.parse()?);
 
@@ -74,7 +74,7 @@ impl L1CoreContract {
                 let decoded =
                     StarknetCore::LogStateUpdate::decode_log_data(log.data())?;
                 Ok((
-                    State::new(
+                    L1State::new(
                         decoded.blockNumber.as_i64(),
                         decoded.blockHash.try_into()?,
                         decoded.globalRoot.try_into()?,
@@ -83,7 +83,7 @@ impl L1CoreContract {
                         .ok_or(eyre::eyre!("L1 block number not found"))?,
                 ))
             })
-            .collect::<Result<Vec<(State, u64)>>>()?;
+            .collect::<Result<Vec<(L1State, u64)>>>()?;
 
         Ok(state_updates)
     }
@@ -91,7 +91,7 @@ impl L1CoreContract {
     pub async fn get_state_on_block(
         &self,
         block: i64,
-    ) -> Result<Option<State>> {
+    ) -> Result<Option<L1State>> {
         Ok(self
             .get_l1_state_updates(block as u64, block as u64)
             .await?

@@ -12,10 +12,10 @@ use sqlx::{Pool, Postgres, QueryBuilder};
 use std::collections::HashMap;
 
 const INSERT_STATE_QUERY: &str =
-    "INSERT INTO state (block_number, block_hash, root)
-    VALUES ($1, $2, $3)
+    "INSERT INTO state (block_number, timestamp, block_hash, root)
+    VALUES ($1, $2, $3, $4)
     ON CONFLICT (block_number)
-    DO UPDATE SET block_hash = $2, root = $3";
+    DO UPDATE SET timestamp = $2, block_hash = $3, root = $4";
 
 #[derive(Clone)]
 pub struct SqlStorageProvider {
@@ -56,6 +56,7 @@ impl SqlStorageProvider {
     async fn create_tables(&self) -> Result<()> {
         let create_state_table_query = "CREATE TABLE IF NOT EXISTS state (
             block_number BIGINT PRIMARY KEY,
+            timestamp BIGINT NOT NULL,
             block_hash VARCHAR(66) NOT NULL UNIQUE,
             root VARCHAR(66) NOT NULL
         )";
@@ -75,18 +76,19 @@ impl SqlStorageProvider {
 
     async fn fill_default_state_data(&self) -> Result<()> {
         // TODO: should be common code for all providers
-        let default_data: Vec<(i64, &str, &str)> = vec![
-            (1000000, "0x7256dde30ae68f43f3def9ce2a4433dd3de11b630d4f84336891bad8fe4127e", "0x7bd9798e3b03e6dfc12db132d48e4a0dc75202aa6a9b57bc40e3796137bd617"),
-            (1000056, "0x56373a6b0d35130e0f7e9a3461b269317b1836aa66247744335d3d22067dd7f", "0x325ca7903f521b687dcd48736a0a6b32b506149c6d896603187e465ab3f1f74"),
-            (1537726, "0x4a84a6981961b9b47b7bf1da94b7c1d25bebab57b09c22caf171a5aae3c1be8", "0x4013dab22b14596c1f579ecd8fae880af2be8b2a52084c75e70e592c11ceaf"),
-            (2000000, "0x55bcdb9f4976886eb8e507dd527f478befda6831863760618ad50bf2e084a81", "0x3f4c29e48bcd9f5a706804ac5bd4adab9029ac5048a23fa9ce7c8df832082e1"),
-            (2318292, "0x6592d1de9e8733706f2f30de1b92ccfb28c879582e153a8ecca8a880d9024b6", "0x31edbc87309c6012f8fc1795fb7527c518a8a9044b5bd0d5df7ae71a923150a"),
-            (3000000, "0x1f810eb93546dc8d8ef9ed02b97d047068f16b891dfda97fce0612876ea82df", "0x35451d7ed149e89297555c6d6a65b1aa930544d78c6be66d9add0fde4ad3ef9"),
-            (3262346, "0x58c4122809465bcea8719bc2e5d5acb787dce3eda8e0da9a72a749df99c578", "0x6dbc5b441772a4ac2b1a1b4602c5aeaa4d2404132c627c40ae59ba52d5c4eba"),
+        let default_data: Vec<(i64, i64, &str, &str)> = vec![
+            (1000000, 1734728886, "0x7256dde30ae68f43f3def9ce2a4433dd3de11b630d4f84336891bad8fe4127e", "0x7bd9798e3b03e6dfc12db132d48e4a0dc75202aa6a9b57bc40e3796137bd617"),
+            (1000056, 1734730627, "0x56373a6b0d35130e0f7e9a3461b269317b1836aa66247744335d3d22067dd7f", "0x325ca7903f521b687dcd48736a0a6b32b506149c6d896603187e465ab3f1f74"),
+            (1537726, 1751379246, "0x4a84a6981961b9b47b7bf1da94b7c1d25bebab57b09c22caf171a5aae3c1be8", "0x4013dab22b14596c1f579ecd8fae880af2be8b2a52084c75e70e592c11ceaf"),
+            (2000000, 1756996858, "0x55bcdb9f4976886eb8e507dd527f478befda6831863760618ad50bf2e084a81", "0x3f4c29e48bcd9f5a706804ac5bd4adab9029ac5048a23fa9ce7c8df832082e1"),
+            (2318292, 1758371464, "0x6592d1de9e8733706f2f30de1b92ccfb28c879582e153a8ecca8a880d9024b6", "0x31edbc87309c6012f8fc1795fb7527c518a8a9044b5bd0d5df7ae71a923150a"),
+            (3000000, 1760521165, "0x1f810eb93546dc8d8ef9ed02b97d047068f16b891dfda97fce0612876ea82df", "0x35451d7ed149e89297555c6d6a65b1aa930544d78c6be66d9add0fde4ad3ef9"),
+            (3262346, 1761783752, "0x58c4122809465bcea8719bc2e5d5acb787dce3eda8e0da9a72a749df99c578", "0x6dbc5b441772a4ac2b1a1b4602c5aeaa4d2404132c627c40ae59ba52d5c4eba"),
         ];
-        for (block_number, block_hash, root) in default_data.iter() {
+        for (block_number, timestamp, block_hash, root) in default_data.iter() {
             sqlx::query(INSERT_STATE_QUERY)
                 .bind(block_number)
+                .bind(timestamp)
                 .bind(block_hash)
                 .bind(root)
                 .execute(&self.pool)
@@ -115,8 +117,8 @@ impl SqlStorageProvider {
 #[async_trait]
 impl StorageProviderTrait for SqlStorageProvider {
     async fn read_state(&self, block_number: i64) -> Result<State> {
-        let query = "SELECT block_number, block_hash, root FROM state WHERE block_number = $1";
-        let row: Option<(i64, String, String)> = sqlx::query_as(query)
+        let query = "SELECT block_number, timestamp, block_hash, root FROM state WHERE block_number = $1";
+        let row: Option<(i64, i64, String, String)> = sqlx::query_as(query)
             .bind(block_number)
             .fetch_optional(&self.pool)
             .await?;
@@ -125,8 +127,8 @@ impl StorageProviderTrait for SqlStorageProvider {
     }
 
     async fn read_state_after(&self, block_number: i64) -> Result<State> {
-        let query = "SELECT block_number, block_hash, root FROM state WHERE block_number > $1 ORDER BY block_number ASC LIMIT 1";
-        let row: Option<(i64, String, String)> = sqlx::query_as(query)
+        let query = "SELECT block_number, timestamp, block_hash, root FROM state WHERE block_number > $1 ORDER BY block_number ASC LIMIT 1";
+        let row: Option<(i64, i64, String, String)> = sqlx::query_as(query)
             .bind(block_number)
             .fetch_optional(&self.pool)
             .await?;
@@ -139,8 +141,8 @@ impl StorageProviderTrait for SqlStorageProvider {
         start_block: i64,
         end_block: i64,
     ) -> Result<Vec<State>> {
-        let query = "SELECT block_number, block_hash, root FROM state WHERE block_number >= $1 AND block_number <= $2";
-        let rows: Vec<(i64, String, String)> = sqlx::query_as(query)
+        let query = "SELECT block_number, timestamp, block_hash, root FROM state WHERE block_number >= $1 AND block_number <= $2";
+        let rows: Vec<(i64, i64, String, String)> = sqlx::query_as(query)
             .bind(start_block)
             .bind(end_block)
             .fetch_all(&self.pool)
@@ -149,8 +151,8 @@ impl StorageProviderTrait for SqlStorageProvider {
     }
 
     async fn read_state_by_hash(&self, block_hash: &Felt) -> Result<State> {
-        let query = "SELECT block_number, block_hash, root FROM state WHERE block_hash = $1";
-        let row: Option<(i64, String, String)> = sqlx::query_as(query)
+        let query = "SELECT block_number, timestamp, block_hash, root FROM state WHERE block_hash = $1";
+        let row: Option<(i64, i64, String, String)> = sqlx::query_as(query)
             .bind(block_hash.as_ref())
             .fetch_optional(&self.pool)
             .await?;
@@ -159,8 +161,8 @@ impl StorageProviderTrait for SqlStorageProvider {
     }
 
     async fn read_latest_state(&self) -> Result<State> {
-        let query = "SELECT block_number, block_hash, root FROM state ORDER BY block_number DESC LIMIT 1";
-        let row: Option<(i64, String, String)> =
+        let query = "SELECT block_number, timestamp, block_hash, root FROM state ORDER BY block_number DESC LIMIT 1";
+        let row: Option<(i64, i64, String, String)> =
             sqlx::query_as(query).fetch_optional(&self.pool).await?;
 
         parse_state_row(row)
@@ -169,6 +171,7 @@ impl StorageProviderTrait for SqlStorageProvider {
     async fn write_state(&self, state: &State) -> Result<()> {
         sqlx::query(INSERT_STATE_QUERY)
             .bind(state.block_number)
+            .bind(state.timestamp)
             .bind(state.block_hash.as_ref())
             .bind(state.root.as_ref())
             .execute(&self.pool)
