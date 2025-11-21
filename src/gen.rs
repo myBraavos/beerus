@@ -774,6 +774,12 @@ pub mod gen {
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
+    pub struct MigratedCompiledClass {
+        pub class_hash: Felt,
+        pub compiled_class_hash: Felt,
+    }
+
+    #[derive(Clone, Debug, Deserialize, Serialize)]
     pub struct DeprecatedCairoEntryPoint {
         pub offset: NumAsHex,
         pub selector: Felt,
@@ -1687,6 +1693,9 @@ pub mod gen {
         pub nonces: Vec<NonceUpdate>,
         pub replaced_classes: Vec<ReplacedClass>,
         pub storage_diffs: Vec<ContractStorageDiffItem>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
+        pub migrated_compiled_classes: Option<Vec<MigratedCompiledClass>>,
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -9206,6 +9215,28 @@ impl TryFrom<StateDiff> for starknet_api::state::ThinStateDiff {
                 IndexMap<ContractAddress, IndexMap<StorageKey, StarkHash>>,
                 crate::exe::err::Error,
             >>()?;
+        let migrated_compiled_classes = if let Some(migrated_compiled_classes) =
+            state_diff.migrated_compiled_classes
+        {
+            migrated_compiled_classes
+                .into_iter()
+                .map(|item| {
+                    Ok((
+                        ClassHash(StarkFelt::from_hex_unchecked(
+                            item.class_hash.as_ref(),
+                        )),
+                        CompiledClassHash(StarkFelt::from_hex_unchecked(
+                            item.compiled_class_hash.as_ref(),
+                        )),
+                    ))
+                })
+                .collect::<Result<
+                    IndexMap<ClassHash, CompiledClassHash>,
+                    crate::exe::err::Error,
+                >>()?
+        } else {
+            IndexMap::new()
+        };
         let all_deployed_contracts = deployed_contracts
             .into_iter()
             .chain(replaced_classes)
@@ -9216,7 +9247,7 @@ impl TryFrom<StateDiff> for starknet_api::state::ThinStateDiff {
             deprecated_declared_classes,
             nonces,
             storage_diffs,
-            migrated_compiled_classes: IndexMap::new(), // TODO: implement this
+            migrated_compiled_classes,
         };
         Ok(ThinStateDiff::from(state_diff))
     }
