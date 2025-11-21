@@ -22,7 +22,43 @@ impl ToCairo for GenContractClass {
 
         // Handle ABI conversion if present
         if let Some(abi_str) = self.abi {
-            let abi: Value = serde_json::from_str(&abi_str)?;
+            let mut abi: Value = serde_json::from_str(&abi_str)?;
+
+            // Fix for cairo 1.1.0 abi format
+            // Transform event items: replace 'inputs' with 'members' and add 'kind: struct'
+            if let Some(abi_array) = abi.as_array_mut() {
+                for item in abi_array {
+                    if let Some(item_obj) = item.as_object_mut() {
+                        // Check if this is an event item with 'inputs' field
+                        if item_obj.get("type").and_then(|t| t.as_str()) == Some("event")
+                            && item_obj.contains_key("inputs")
+                        {
+                            // Replace 'inputs' with 'members'
+                            if let Some(inputs) = item_obj.remove("inputs") {
+                                // Transform each member item to add 'kind: data'
+                                let members = if let Some(inputs_array) = inputs.as_array() {
+                                    let mut members_array = Vec::new();
+                                    for input in inputs_array {
+                                        if let Some(mut input_obj) = input.as_object().cloned() {
+                                            input_obj.insert("kind".to_string(), Value::String("data".to_string()));
+                                            members_array.push(Value::Object(input_obj));
+                                        } else {
+                                            members_array.push(input.clone());
+                                        }
+                                    }
+                                    Value::Array(members_array)
+                                } else {
+                                    inputs
+                                };
+                                item_obj.insert("members".to_string(), members);
+                            }
+                            // Add 'kind: struct'
+                            item_obj.insert("kind".to_string(), Value::String("struct".to_string()));
+                        }
+                    }
+                }
+            }
+
             json["abi"] = abi;
         }
 
