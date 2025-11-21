@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::{
     client::{l1_range::L1Range, State},
     gen::Felt,
@@ -5,9 +7,30 @@ use crate::{
 };
 use async_trait::async_trait;
 use eyre::Result;
+use tokio::sync::Mutex;
 
 #[derive(Clone)]
-pub struct MockStorageProvider {}
+pub struct MockStorageProvider {
+    l1_ranges: Arc<Mutex<Vec<L1Range>>>
+}
+
+impl MockStorageProvider {
+    pub fn new() -> Self {
+        Self {
+            l1_ranges: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    pub fn with_initial_range(initial_range: L1Range) -> Self {
+        Self {
+            l1_ranges: Arc::new(Mutex::new(vec![initial_range])),
+        }
+    }
+
+    pub fn get_l1_ranges(&self) -> Arc<Mutex<Vec<L1Range>>> {
+        self.l1_ranges.clone()
+    }
+}
 
 #[async_trait]
 impl StorageProviderTrait for MockStorageProvider {
@@ -39,7 +62,8 @@ impl StorageProviderTrait for MockStorageProvider {
         panic!("Not implemented");
     }
     async fn read_latest_l1_range(&self) -> Result<L1Range> {
-        panic!("Not implemented");
+        let ranges = self.l1_ranges.lock().await;
+        ranges.last().cloned().ok_or_else(|| eyre::eyre!("No ranges set"))
     }
     async fn find_big_range(
         &self,
@@ -48,7 +72,9 @@ impl StorageProviderTrait for MockStorageProvider {
     ) -> Result<L1Range> {
         panic!("Not implemented");
     }
-    async fn write_l1_range(&self, _l1_range: &L1Range) -> Result<()> {
+    async fn write_l1_range(&self, l1_range: &L1Range) -> Result<()> {
+        let mut ranges = self.l1_ranges.lock().await;
+        ranges.push(l1_range.clone());
         Ok(())
     }
     async fn write_l1_ranges(&self, _l1_ranges: &[L1Range]) -> Result<()> {

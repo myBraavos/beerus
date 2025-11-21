@@ -959,6 +959,7 @@ mod tests {
             new_root: create_felt("0x5bc87df12fc2a96a350c31cf8b93601c3b33521879df49a107a426e36b71e68"),
             old_root: create_felt("0x5340acb42e122c008dc3102168d560f0a71c38ef6f86af27ab2ad029d8f3acd"),
             state_diff: StateDiff {
+                migrated_compiled_classes: None,
                 declared_classes: vec![],
                 deployed_contracts: vec![],
                 deprecated_declared_classes: vec![],
