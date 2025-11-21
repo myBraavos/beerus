@@ -1022,8 +1022,10 @@ mod tests {
 
     // Helper to create L1State
     fn create_l1_state(block_number: i64) -> L1State {
-        let block_hash = Felt::try_new(&format!("0x{:064x}", block_number)).unwrap();
-        let root = Felt::try_new(&format!("0x{:064x}", block_number + 1000)).unwrap();
+        let block_hash =
+            Felt::try_new(&format!("0x{:064x}", block_number)).unwrap();
+        let root =
+            Felt::try_new(&format!("0x{:064x}", block_number + 1000)).unwrap();
         L1State::new(block_number, block_hash, root)
     }
 
@@ -1060,33 +1062,47 @@ mod tests {
                 // Encode LogStateUpdate event
                 // Event signature: LogStateUpdate(uint256 globalRoot, int256 blockNumber, uint256 blockHash)
                 // Convert Felt hex string to [u8; 32] by parsing the hex
-                let root_hex = state.root.as_ref().strip_prefix("0x").unwrap_or(state.root.as_ref());
+                let root_hex = state
+                    .root
+                    .as_ref()
+                    .strip_prefix("0x")
+                    .unwrap_or(state.root.as_ref());
                 // Pad odd-length hex strings with leading zero
                 let root_hex_padded = if root_hex.len() % 2 == 1 {
                     format!("0{}", root_hex)
                 } else {
                     root_hex.to_string()
                 };
-                let root_bytes = hex::decode(&root_hex_padded).expect("valid hex");
+                let root_bytes =
+                    hex::decode(&root_hex_padded).expect("valid hex");
                 let mut root_bytes_32 = [0u8; 32];
                 // Copy from the end to handle leading zeros
-                let start = root_bytes_32.len().saturating_sub(root_bytes.len());
+                let start =
+                    root_bytes_32.len().saturating_sub(root_bytes.len());
                 root_bytes_32[start..].copy_from_slice(&root_bytes);
 
-                let hash_hex = state.block_hash.as_ref().strip_prefix("0x").unwrap_or(state.block_hash.as_ref());
+                let hash_hex = state
+                    .block_hash
+                    .as_ref()
+                    .strip_prefix("0x")
+                    .unwrap_or(state.block_hash.as_ref());
                 // Pad odd-length hex strings with leading zero
                 let hash_hex_padded = if hash_hex.len() % 2 == 1 {
                     format!("0{}", hash_hex)
                 } else {
                     hash_hex.to_string()
                 };
-                let hash_bytes = hex::decode(&hash_hex_padded).expect("valid hex");
+                let hash_bytes =
+                    hex::decode(&hash_hex_padded).expect("valid hex");
                 let mut hash_bytes_32 = [0u8; 32];
-                let start = hash_bytes_32.len().saturating_sub(hash_bytes.len());
+                let start =
+                    hash_bytes_32.len().saturating_sub(hash_bytes.len());
                 hash_bytes_32[start..].copy_from_slice(&hash_bytes);
 
                 let root_u256: U256 = U256::from_be_bytes(root_bytes_32);
-                let block_num_i256 = alloy::primitives::I256::try_from(state.block_number).expect("block_number fits I256");
+                let block_num_i256 =
+                    alloy::primitives::I256::try_from(state.block_number)
+                        .expect("block_number fits I256");
                 let hash_u256: U256 = U256::from_be_bytes(hash_bytes_32);
 
                 serde_json::json!({
@@ -1127,8 +1143,10 @@ mod tests {
 
         let config = get_mock_config(mock.uri());
         let initial_range = L1Range::new(100, 200, 1000, 2000);
-        let storage = Arc::new(MockStorageProvider::with_initial_range(initial_range));
-        let client = Client::new(&config, Http::new(), storage.clone()).await.unwrap();
+        let storage =
+            Arc::new(MockStorageProvider::with_initial_range(initial_range));
+        let client =
+            Client::new(&config, Http::new(), storage.clone()).await.unwrap();
 
         // Create L1State that's within the existing range
         let l1_state = create_l1_state(1500); // Within range [1000, 2000]
@@ -1158,8 +1176,10 @@ mod tests {
 
         let config = get_mock_config(mock.uri());
         let initial_range = L1Range::new(100, 200, 1000, 2000);
-        let storage = Arc::new(MockStorageProvider::with_initial_range(initial_range));
-        let client = Client::new(&config, Http::new(), storage.clone()).await.unwrap();
+        let storage =
+            Arc::new(MockStorageProvider::with_initial_range(initial_range));
+        let client =
+            Client::new(&config, Http::new(), storage.clone()).await.unwrap();
 
         let l1_state = create_l1_state(2500);
 
@@ -1169,7 +1189,11 @@ mod tests {
         // Verify new range was written
         let binding = storage.get_l1_ranges();
         let written_ranges = binding.lock().await;
-        assert_eq!(written_ranges.len(), 2, "Initial range + new range should exist");
+        assert_eq!(
+            written_ranges.len(),
+            2,
+            "Initial range + new range should exist"
+        );
         let written_range = &written_ranges[1];
         assert_eq!(written_range.l1_end, 250, "L1 end should be updated");
         assert_eq!(written_range.l2_end, 2500, "L2 end should match new state");
@@ -1206,8 +1230,10 @@ mod tests {
 
         let config = get_mock_config(mock.uri());
         let initial_range = L1Range::new(100, 200, 1000, 2000);
-        let storage = Arc::new(MockStorageProvider::with_initial_range(initial_range));
-        let client = Client::new(&config, Http::new(), storage.clone()).await.unwrap();
+        let storage =
+            Arc::new(MockStorageProvider::with_initial_range(initial_range));
+        let client =
+            Client::new(&config, Http::new(), storage.clone()).await.unwrap();
 
         let l1_state = create_l1_state(2500);
 
@@ -1233,7 +1259,10 @@ mod tests {
             async fn read_state(&self, _block_number: i64) -> Result<State> {
                 panic!("Not implemented");
             }
-            async fn read_state_after(&self, _block_number: i64) -> Result<State> {
+            async fn read_state_after(
+                &self,
+                _block_number: i64,
+            ) -> Result<State> {
                 panic!("Not implemented");
             }
             async fn read_states_by_range(
@@ -1243,7 +1272,10 @@ mod tests {
             ) -> Result<Vec<State>> {
                 panic!("Not implemented");
             }
-            async fn read_state_by_hash(&self, _block_hash: &Felt) -> Result<State> {
+            async fn read_state_by_hash(
+                &self,
+                _block_hash: &Felt,
+            ) -> Result<State> {
                 panic!("Not implemented");
             }
             async fn read_latest_state(&self) -> Result<State> {
@@ -1252,7 +1284,10 @@ mod tests {
             async fn write_state(&self, _state: &State) -> Result<()> {
                 Ok(())
             }
-            async fn read_l1_range(&self, _block_number: i64) -> Result<L1Range> {
+            async fn read_l1_range(
+                &self,
+                _block_number: i64,
+            ) -> Result<L1Range> {
                 panic!("Not implemented");
             }
             async fn read_latest_l1_range(&self) -> Result<L1Range> {
@@ -1268,7 +1303,10 @@ mod tests {
             async fn write_l1_range(&self, _l1_range: &L1Range) -> Result<()> {
                 Ok(())
             }
-            async fn write_l1_ranges(&self, _l1_ranges: &[L1Range]) -> Result<()> {
+            async fn write_l1_ranges(
+                &self,
+                _l1_ranges: &[L1Range],
+            ) -> Result<()> {
                 Ok(())
             }
         }
@@ -1308,7 +1346,8 @@ mod tests {
 
         let config = get_mock_config(mock.uri());
         let initial_range = L1Range::new(100, 200, 1000, 2000);
-        let storage = Arc::new(MockStorageProvider::with_initial_range(initial_range));
+        let storage =
+            Arc::new(MockStorageProvider::with_initial_range(initial_range));
         let client = Client::new(&config, Http::new(), storage).await.unwrap();
 
         let l1_state = create_l1_state(2500);
@@ -1338,7 +1377,10 @@ mod tests {
             async fn read_state(&self, _block_number: i64) -> Result<State> {
                 panic!("Not implemented");
             }
-            async fn read_state_after(&self, _block_number: i64) -> Result<State> {
+            async fn read_state_after(
+                &self,
+                _block_number: i64,
+            ) -> Result<State> {
                 panic!("Not implemented");
             }
             async fn read_states_by_range(
@@ -1348,7 +1390,10 @@ mod tests {
             ) -> Result<Vec<State>> {
                 panic!("Not implemented");
             }
-            async fn read_state_by_hash(&self, _block_hash: &Felt) -> Result<State> {
+            async fn read_state_by_hash(
+                &self,
+                _block_hash: &Felt,
+            ) -> Result<State> {
                 panic!("Not implemented");
             }
             async fn read_latest_state(&self) -> Result<State> {
@@ -1357,7 +1402,10 @@ mod tests {
             async fn write_state(&self, _state: &State) -> Result<()> {
                 Ok(())
             }
-            async fn read_l1_range(&self, _block_number: i64) -> Result<L1Range> {
+            async fn read_l1_range(
+                &self,
+                _block_number: i64,
+            ) -> Result<L1Range> {
                 panic!("Not implemented");
             }
             async fn read_latest_l1_range(&self) -> Result<L1Range> {
@@ -1373,7 +1421,10 @@ mod tests {
             async fn write_l1_range(&self, _l1_range: &L1Range) -> Result<()> {
                 Err(eyre::eyre!("Storage write error"))
             }
-            async fn write_l1_ranges(&self, _l1_ranges: &[L1Range]) -> Result<()> {
+            async fn write_l1_ranges(
+                &self,
+                _l1_ranges: &[L1Range],
+            ) -> Result<()> {
                 Ok(())
             }
         }
@@ -1388,7 +1439,10 @@ mod tests {
         let l1_state = create_l1_state(2500);
 
         let result = client.store_latest_l1_range(&l1_state).await;
-        assert!(result.is_err(), "Should return error when storage write fails");
+        assert!(
+            result.is_err(),
+            "Should return error when storage write fails"
+        );
         assert!(
             result.unwrap_err().to_string().contains("Storage write error"),
             "Error should contain storage write error message"
@@ -1403,8 +1457,10 @@ mod tests {
 
         let config = get_mock_config(mock.uri());
         let initial_range = L1Range::new(100, 200, 1000, 2000);
-        let storage = Arc::new(MockStorageProvider::with_initial_range(initial_range));
-        let client = Client::new(&config, Http::new(), storage.clone()).await.unwrap();
+        let storage =
+            Arc::new(MockStorageProvider::with_initial_range(initial_range));
+        let client =
+            Client::new(&config, Http::new(), storage.clone()).await.unwrap();
 
         // Create L1State exactly at the boundary
         let l1_state = create_l1_state(2000); // Exactly equals l2_end
@@ -1415,6 +1471,10 @@ mod tests {
         // Verify no new range was written (early return)
         let binding = storage.get_l1_ranges();
         let written_ranges = binding.lock().await;
-        assert_eq!(written_ranges.len(), 1, "Only initial range should exist at boundary");
+        assert_eq!(
+            written_ranges.len(),
+            1,
+            "Only initial range should exist at boundary"
+        );
     }
 }

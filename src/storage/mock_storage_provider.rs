@@ -11,24 +11,26 @@ use tokio::sync::Mutex;
 
 #[derive(Clone)]
 pub struct MockStorageProvider {
-    l1_ranges: Arc<Mutex<Vec<L1Range>>>
+    l1_ranges: Arc<Mutex<Vec<L1Range>>>,
 }
 
 impl MockStorageProvider {
     pub fn new() -> Self {
-        Self {
-            l1_ranges: Arc::new(Mutex::new(Vec::new())),
-        }
+        Self { l1_ranges: Arc::new(Mutex::new(Vec::new())) }
     }
 
     pub fn with_initial_range(initial_range: L1Range) -> Self {
-        Self {
-            l1_ranges: Arc::new(Mutex::new(vec![initial_range])),
-        }
+        Self { l1_ranges: Arc::new(Mutex::new(vec![initial_range])) }
     }
 
     pub fn get_l1_ranges(&self) -> Arc<Mutex<Vec<L1Range>>> {
         self.l1_ranges.clone()
+    }
+}
+
+impl Default for MockStorageProvider {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
