@@ -1,3 +1,0 @@
-starknet_rpc = "https://starknet-mainnet.public.blastapi.io/rpc/v0_9"
-poll_secs = 5
-rpc_addr = "127.0.0.1:3030"

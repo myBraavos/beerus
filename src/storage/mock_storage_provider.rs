@@ -10,6 +10,9 @@ use async_trait::async_trait;
 use eyre::Result;
 use tokio::sync::Mutex;
 
+type BlockRange = (i64, i64);
+type StatesByRange = Arc<Mutex<HashMap<BlockRange, Vec<State>>>>;
+
 #[derive(Clone)]
 pub struct MockStorageProvider {
     l1_ranges: Arc<Mutex<Vec<L1Range>>>,
@@ -17,7 +20,7 @@ pub struct MockStorageProvider {
     states_by_hash: Arc<Mutex<HashMap<String, State>>>,
     latest_state: Arc<Mutex<Option<State>>>,
     big_range: Arc<Mutex<Option<L1Range>>>,
-    states_by_range: Arc<Mutex<HashMap<(i64, i64), Vec<State>>>>,
+    states_by_range: StatesByRange,
 }
 
 impl MockStorageProvider {
@@ -90,15 +93,24 @@ impl MockStorageProvider {
 
     pub fn with_big_range(self, big_range: L1Range) -> Self {
         {
-            let mut br = self.big_range.try_lock().expect("Should be able to lock");
+            let mut br =
+                self.big_range.try_lock().expect("Should be able to lock");
             *br = Some(big_range);
         }
         self
     }
 
-    pub fn with_states_by_range(self, start_block: i64, end_block: i64, states: Vec<State>) -> Self {
+    pub fn with_states_by_range(
+        self,
+        start_block: i64,
+        end_block: i64,
+        states: Vec<State>,
+    ) -> Self {
         {
-            let mut by_range = self.states_by_range.try_lock().expect("Should be able to lock");
+            let mut by_range = self
+                .states_by_range
+                .try_lock()
+                .expect("Should be able to lock");
             by_range.insert((start_block, end_block), states);
         }
         self
@@ -139,12 +151,13 @@ impl StorageProviderTrait for MockStorageProvider {
         end_block: i64,
     ) -> Result<Vec<State>> {
         let by_range = self.states_by_range.lock().await;
-        by_range
-            .get(&(start_block, end_block))
-            .cloned()
-            .ok_or_else(|| {
-                eyre::eyre!("States not found for range {} to {}", start_block, end_block)
-            })
+        by_range.get(&(start_block, end_block)).cloned().ok_or_else(|| {
+            eyre::eyre!(
+                "States not found for range {} to {}",
+                start_block,
+                end_block
+            )
+        })
     }
 
     async fn read_state_by_hash(&self, block_hash: &Felt) -> Result<State> {

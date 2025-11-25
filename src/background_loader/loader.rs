@@ -191,8 +191,8 @@ mod tests {
     use super::*;
     use crate::client::state::{L1State, State};
     use crate::client::Client;
-    use crate::storage::mock_storage_provider::MockStorageProvider;
     use crate::gen::Felt;
+    use crate::storage::mock_storage_provider::MockStorageProvider;
     use std::sync::Arc;
     use wiremock::{
         matchers::{body_string_contains, method},
@@ -372,10 +372,7 @@ mod tests {
         // Mock L1 state updates
         let state1 = create_l1_state(1_000_000);
         let state2 = create_l1_state(1_000_100);
-        let state_updates = vec![
-            (state1.clone(), 100),
-            (state2.clone(), 200),
-        ];
+        let state_updates = vec![(state1.clone(), 100), (state2.clone(), 200)];
         mock_l1_get_logs(&mock, state_updates).await;
 
         let config = get_mock_config(mock.uri());
@@ -497,4 +494,3 @@ mod tests {
         // The test passes if it doesn't panic
     }
 }
-

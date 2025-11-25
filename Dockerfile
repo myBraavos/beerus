@@ -30,7 +30,6 @@ COPY --from=builder /beerus/target/release/beerus /usr/local/bin/
 EXPOSE 3030
 
 LABEL description="Starknet Light Client"
-LABEL authors="Beerus Team @ Eiger"
-LABEL source="https://github.com/eigerco/beerus"
+LABEL source="https://github.com/myBraavos/beerus"
 
 ENTRYPOINT ["/usr/local/bin/beerus"]
