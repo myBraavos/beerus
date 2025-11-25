@@ -787,6 +787,7 @@ mod tests {
     use crate::storage::mock_storage_provider::MockStorageProvider;
 
     use super::*;
+    use crate::gen::Address;
     use wiremock::{
         matchers::{body_string_contains, method},
         Mock, MockServer, ResponseTemplate,
@@ -818,38 +819,61 @@ mod tests {
     }
 
     async fn mock_get_block_with_receipts_response(mock: &MockServer) {
+        mock_get_block_with_receipts_response_for_block(
+            mock,
+            100,
+            "0x1a3ef8f9469ee2f4612717b1b6fb1314c82d8267ae175b71e218b1123294947",
+            "0x456",
+        )
+        .await;
+    }
+
+    async fn mock_get_block_with_receipts_response_for_block(
+        mock: &MockServer,
+        block_number: i64,
+        block_hash: &str,
+        parent_hash: &str,
+    ) {
+        let response = ResponseTemplate::new(200).set_body_json(
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "result": {
+                    "status": "ACCEPTED_ON_L2",
+                    "block_hash": block_hash,
+                    "parent_hash": parent_hash,
+                    "block_number": block_number,
+                    "new_root": "0x5bc87df12fc2a96a350c31cf8b93601c3b33521879df49a107a426e36b71e68",
+                    "timestamp": 1763114861,
+                    "sequencer_address": "0x1176a1bd84444c89232ec27754698e5d2e7e1a7f1539f12027f28b23ec9f3d8",
+                    "l1_gas_price": {
+                        "price_in_fri": "0x1c5b3206b3c9",
+                        "price_in_wei": "0x515ba424"
+                    },
+                    "l1_data_gas_price": {
+                        "price_in_fri": "0xfaf24",
+                        "price_in_wei": "0x2d"
+                    },
+                    "l1_da_mode": "BLOB",
+                    "starknet_version": "0.14.0",
+                    "l2_gas_price": {
+                        "price_in_fri": "0xb2d05e00",
+                        "price_in_wei": "0x2010a"
+                    },
+                    "transactions": []
+                },
+                "id": 0
+            }),
+        );
         Mock::given(method("POST"))
             .and(body_string_contains("starknet_getBlockWithReceipts"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(
-                serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "result": {
-                        "status": "ACCEPTED_ON_L2",
-                        "block_hash": "0x1a3ef8f9469ee2f4612717b1b6fb1314c82d8267ae175b71e218b1123294947",
-                        "parent_hash": "0x456",
-                        "block_number": 100,
-                        "new_root": "0x5bc87df12fc2a96a350c31cf8b93601c3b33521879df49a107a426e36b71e68",
-                        "timestamp": 1763114861,
-                        "sequencer_address": "0x1176a1bd84444c89232ec27754698e5d2e7e1a7f1539f12027f28b23ec9f3d8",
-                        "l1_gas_price": {
-                            "price_in_fri": "0x1c5b3206b3c9",
-                            "price_in_wei": "0x515ba424"
-                        },
-                        "l1_data_gas_price": {
-                            "price_in_fri": "0xfaf24",
-                            "price_in_wei": "0x2d"
-                        },
-                        "l1_da_mode": "BLOB",
-                        "starknet_version": "0.14.0",
-                        "l2_gas_price": {
-                            "price_in_fri": "0xb2d05e00",
-                            "price_in_wei": "0x2010a"
-                        },
-                        "transactions": []
-                    },
-                    "id": 0
-                }),
-            ))
+            .and(body_string_contains(format!("{}", block_number)))
+            .respond_with(response.clone())
+            .mount(mock)
+            .await;
+        Mock::given(method("POST"))
+            .and(body_string_contains("starknet_getBlockWithReceipts"))
+            .and(body_string_contains(format!("{}", block_hash)))
+            .respond_with(response)
             .mount(mock)
             .await;
     }
@@ -1476,5 +1500,861 @@ mod tests {
             1,
             "Only initial range should exist at boundary"
         );
+    }
+
+    ///----- get_state_at tests -----
+
+    // Helper to create a test State
+    fn create_test_state(block_number: i64) -> State {
+        let block_hash =
+            Felt::try_new(&format!("0x{:064x}", block_number)).unwrap();
+        let root =
+            Felt::try_new(&format!("0x{:064x}", block_number + 1000)).unwrap();
+        State::new(block_number, 0, block_hash, root)
+    }
+
+    // Mock gateway response for get_state
+    async fn mock_gateway_get_state(
+        mock: &MockServer,
+        block_number: i64,
+        block_hash: &str,
+    ) {
+        use wiremock::matchers::{method, path, query_param};
+
+        Mock::given(method("GET"))
+            .and(path("/feeder_gateway/get_block"))
+            .and(query_param("headerOnly", "true"))
+            .and(query_param("blockNumber", block_number.to_string()))
+            .respond_with(ResponseTemplate::new(200).set_body_json(
+                serde_json::json!({
+                    "block_number": block_number,
+                    "block_hash": block_hash,
+                }),
+            ))
+            .mount(mock)
+            .await;
+    }
+
+    // Helper to create a valid Felt hash for testing
+    fn create_valid_felt_hash(seed: i64) -> Felt {
+        // Create a valid Felt hash (64 hex chars, no leading zeros after 0x)
+        Felt::try_new(&format!("0x{:064x}", seed)).unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_get_state_at_block_tag_latest() {
+        // Test case: BlockTag::Latest should return latest state from storage
+        let mock = MockServer::start().await;
+        mock_spec_version_response(&mock).await;
+
+        let config = get_mock_config(mock.uri());
+        let latest_state = create_test_state(5000);
+        let storage = Arc::new(
+            MockStorageProvider::new().with_latest_state(latest_state.clone()),
+        );
+        let client = Client::new(&config, Http::new(), storage).await.unwrap();
+
+        let result =
+            client.get_state_at(BlockId::BlockTag(BlockTag::Latest)).await;
+        assert!(result.is_ok(), "Should return latest state");
+        let state = result.unwrap();
+        assert_eq!(state.block_number, latest_state.block_number);
+        assert_eq!(state.block_hash, latest_state.block_hash);
+    }
+
+    #[tokio::test]
+    async fn test_get_state_at_block_tag_pending() {
+        // Test case: BlockTag::Pending should also return latest state from storage
+        let mock = MockServer::start().await;
+        mock_spec_version_response(&mock).await;
+
+        let config = get_mock_config(mock.uri());
+        let latest_state = create_test_state(5000);
+        let storage = Arc::new(
+            MockStorageProvider::new().with_latest_state(latest_state.clone()),
+        );
+        let client = Client::new(&config, Http::new(), storage).await.unwrap();
+
+        let result =
+            client.get_state_at(BlockId::BlockTag(BlockTag::Pending)).await;
+        assert!(result.is_ok(), "Should return latest state for pending");
+        let state = result.unwrap();
+        assert_eq!(state.block_number, latest_state.block_number);
+    }
+
+    #[tokio::test]
+    async fn test_get_state_at_block_tag_storage_error() {
+        // Test case: BlockTag should propagate storage read errors
+        let mock = MockServer::start().await;
+        mock_spec_version_response(&mock).await;
+
+        let config = get_mock_config(mock.uri());
+        let storage = Arc::new(MockStorageProvider::new());
+        let client = Client::new(&config, Http::new(), storage).await.unwrap();
+
+        let result =
+            client.get_state_at(BlockId::BlockTag(BlockTag::Latest)).await;
+        assert!(result.is_err(), "Should return error when no latest state");
+    }
+
+    #[tokio::test]
+    async fn test_get_state_at_block_number_found_in_storage() {
+        // Test case: BlockNumber found in storage should return immediately
+        let mock = MockServer::start().await;
+        mock_spec_version_response(&mock).await;
+
+        let config = get_mock_config(mock.uri());
+        let state = create_test_state(3000);
+        let storage =
+            Arc::new(MockStorageProvider::new().with_state(state.clone()));
+        let client = Client::new(&config, Http::new(), storage).await.unwrap();
+
+        let result = client
+            .get_state_at(BlockId::BlockNumber {
+                block_number: BlockNumber::try_new(3000).unwrap(),
+            })
+            .await;
+        assert!(result.is_ok(), "Should return state from storage");
+        let returned_state = result.unwrap();
+        assert_eq!(returned_state.block_number, state.block_number);
+        assert_eq!(returned_state.block_hash, state.block_hash);
+    }
+
+    #[tokio::test]
+    async fn test_get_state_at_block_hash_found_in_storage() {
+        // Test case: BlockHash found in storage should return immediately
+        let mock = MockServer::start().await;
+        mock_spec_version_response(&mock).await;
+
+        let config = get_mock_config(mock.uri());
+        let state = create_test_state(3000);
+        let block_hash = state.block_hash.clone();
+        let storage =
+            Arc::new(MockStorageProvider::new().with_state(state.clone()));
+        let client = Client::new(&config, Http::new(), storage).await.unwrap();
+
+        let result = client
+            .get_state_at(BlockId::BlockHash {
+                block_hash: BlockHash(block_hash.clone()),
+            })
+            .await;
+        assert!(result.is_ok(), "Should return state from storage");
+        let returned_state = result.unwrap();
+        assert_eq!(returned_state.block_hash, block_hash);
+        assert_eq!(returned_state.block_number, state.block_number);
+    }
+
+    #[tokio::test]
+    async fn test_get_state_at_block_number_not_found_requires_l1_sync() {
+        // prepare test data
+        let mock = MockServer::start().await;
+        let block_number = 2_000_000;
+        let test_block_hash =
+            "0x5e1f17aa69fc4aed2ab97c01551c9dca44569aa1e890a2c9c57593e062ef6d4";
+        let test_block_hash_felt = Felt::try_new(test_block_hash).unwrap();
+
+        let l1_state = L1State::new(
+            block_number,
+            test_block_hash_felt.clone(),
+            test_block_hash_felt.clone(),
+        );
+        let state_updates = vec![(l1_state.clone(), 200)];
+
+        let config = get_mock_config(mock.uri());
+        let l1_range = L1Range::new(100, 200, 1_000_000, block_number);
+
+        // setup mocks
+        mock_spec_version_response(&mock).await;
+        mock_gateway_get_state(&mock, block_number, test_block_hash).await;
+        mock_l1_get_logs(&mock, state_updates).await;
+        mock_get_block_with_receipts_response_for_block(
+            &mock,
+            block_number,
+            test_block_hash,
+            "0x456",
+        )
+        .await;
+        mock_get_state_update_response(&mock).await;
+
+        // setup client
+        let storage =
+            Arc::new(MockStorageProvider::new().with_l1_range(l1_range));
+        let client =
+            Client::new(&config, Http::new(), storage.clone()).await.unwrap();
+
+        let result = client
+            .get_state_at(BlockId::BlockNumber {
+                block_number: BlockNumber::try_new(block_number).unwrap(),
+            })
+            .await;
+        assert!(result.is_ok(), "Should successfully sync state using L1");
+        let state = result.unwrap();
+        assert_eq!(state.block_number, block_number);
+        assert_eq!(state.block_hash, test_block_hash_felt);
+    }
+
+    #[tokio::test]
+    async fn test_get_state_at_block_hash_not_found_and_not_on_l1_edge() {
+        // prepare test data
+        let mock = MockServer::start().await;
+        let block_number = 2_000_000;
+
+        let test_block_hash_parent = "0x456";
+        let test_block_hash_parent_felt =
+            Felt::try_new(test_block_hash_parent).unwrap();
+        let test_block_hash =
+            "0x5e1f17aa69fc4aed2ab97c01551c9dca44569aa1e890a2c9c57593e062ef6d4";
+        let test_block_hash_next = "0x321e890a2c9c57593e062ef6d4";
+        let test_block_hash_next_felt =
+            Felt::try_new(test_block_hash_next).unwrap();
+        let test_block_hash_felt = Felt::try_new(test_block_hash).unwrap();
+
+        let l1_state_prev = L1State::new(
+            block_number - 1,
+            test_block_hash_parent_felt.clone(),
+            test_block_hash_parent_felt.clone(),
+        );
+        let l1_state_next = L1State::new(
+            block_number + 1,
+            test_block_hash_next_felt.clone(),
+            test_block_hash_next_felt.clone(),
+        );
+        let state_updates =
+            vec![(l1_state_prev.clone(), 1980), (l1_state_next.clone(), 2000)];
+
+        let config = get_mock_config(mock.uri());
+        let l1_range = L1Range::new(100, 2000, 1_000_000, block_number + 1);
+
+        // setup mocks
+        mock_spec_version_response(&mock).await;
+        mock_gateway_get_state(&mock, block_number, test_block_hash).await;
+        mock_l1_get_logs(&mock, state_updates).await;
+        mock_get_block_with_receipts_response_for_block(
+            &mock,
+            block_number,
+            test_block_hash,
+            "0x456",
+        )
+        .await;
+        mock_get_block_with_receipts_response_for_block(
+            &mock,
+            block_number + 1,
+            test_block_hash_next,
+            test_block_hash,
+        )
+        .await;
+        mock_get_state_update_response(&mock).await;
+
+        // setup client
+        let storage =
+            Arc::new(MockStorageProvider::new().with_l1_range(l1_range));
+        storage.write_state(&l1_state_next.into()).await.unwrap();
+        let client: Client<Http, MockStorageProvider> =
+            Client::new(&config, Http::new(), storage.clone()).await.unwrap();
+
+        let result = client
+            .get_state_at(BlockId::BlockNumber {
+                block_number: BlockNumber::try_new(block_number).unwrap(),
+            })
+            .await;
+        assert!(result.is_ok(), "Should successfully sync state using L1");
+        let state = result.unwrap();
+        assert_eq!(state.block_number, block_number);
+        assert_eq!(state.block_hash, test_block_hash_felt);
+    }
+
+    #[tokio::test]
+    async fn test_get_state_at_block_hash_gateway_error() {
+        // Test case: Gateway error should propagate
+        let mock = MockServer::start().await;
+        mock_spec_version_response(&mock).await;
+
+        // Mock gateway error response
+        use wiremock::matchers::{method, path};
+        Mock::given(method("GET"))
+            .and(path("/feeder_gateway/get_block"))
+            .respond_with(
+                ResponseTemplate::new(500)
+                    .set_body_string("Internal Server Error"),
+            )
+            .mount(&mock)
+            .await;
+
+        let config = get_mock_config(mock.uri());
+        let storage = Arc::new(MockStorageProvider::new());
+        let client = Client::new(&config, Http::new(), storage).await.unwrap();
+
+        let block_hash = create_valid_felt_hash(9999);
+        let result = client
+            .get_state_at(BlockId::BlockHash {
+                block_hash: BlockHash(block_hash),
+            })
+            .await;
+        assert!(result.is_err(), "Should propagate gateway error");
+    }
+
+    ///----- execute tests -----
+
+    // Helper to create a test State for execute tests
+    fn create_execute_test_state(block_number: i64) -> State {
+        let block_hash =
+            Felt::try_new(&format!("0x{:064x}", block_number)).unwrap();
+        let root =
+            Felt::try_new("0x053f73e74df4324c1d7afa62453af15a2720b11b2c987b64cd6fb171a9db22de").unwrap();
+        State::new(block_number, 0, block_hash, root)
+    }
+
+    // Mock getStorageAt response
+    async fn mock_get_storage_at(mock: &MockServer, value: &str) {
+        Mock::given(method("POST"))
+            .and(body_string_contains("starknet_getStorageAt"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "result": value,
+                    "id": 0
+                }),
+            ))
+            .mount(mock)
+            .await;
+    }
+
+    // Mock getProof response
+    async fn mock_get_proof(mock: &MockServer) {
+        Mock::given(method("POST"))
+            .and(body_string_contains("starknet_getStorageProof"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(
+                serde_json::json!({
+                    "id": 1,
+                    "jsonrpc": "2.0",
+                    "result": {
+                        "classes_proof": [],
+                        "contracts_proof": {
+                            "contract_leaves_data": [
+                                {
+                                    "class_hash": "0x344d356a0ac8f4d35ee8c5bc89b421e3e6f55fa5f03849d92910f6c1630f9ae",
+                                    "nonce": "0x0",
+                                    "storage_root": "0x58d716d042a9f7b2cc3d9cdf9eeff12a2f62b2bf926c99311ace603562c3bd6"
+                                }
+                            ],
+                            "nodes": [
+                                {
+                                    "node": {
+                                        "left": "0x6fd89ab2e6df810bfecfd887119b6b272fa5784086cd48a063f915087971542",
+                                        "right": "0x45059c0259d3ce95cf00c8a15d4af8882a29fb2a35d1292c78ce1f751c551cc"
+                                    },
+                                    "node_hash": "0x12b2847a9ab831552fd0d637f9d3f3a373234ce8a0504a40a3d09512a1268bb"
+                                },
+                                {
+                                    "node": {
+                                        "left": "0xca8784b17f57dae963848d8b81320ad53c8802558c0f62e25cc133739bd668",
+                                        "right": "0x72a741e6e97f5f92e670a87c2713062376ed1d2ab1dbb054b721f2f99ef4451"
+                                    },
+                                    "node_hash": "0x39e671b8a0dda2a0f48012b2f3e1a382c60f03072948312af62082487214a3"
+                                },
+                                {
+                                    "node": {
+                                        "left": "0x8965f1d848fc31c1d1155c30d3ad641b00341078a8a7e0fdbcea8df3b8f2e3",
+                                        "right": "0x3546f9fdca36fd67b87b4ef5f7cb0d15d7324cac5aefde5b1bd8f17e7b44d6e"
+                                    },
+                                    "node_hash": "0x1586e8b2b7096e6251267a7f45b9dc4b9d289a3af909f7513e72c21f0f29227"
+                                },
+                                {
+                                    "node": {
+                                        "left": "0x42a267a59d09d81cd7e49cb41bb64da695743799985ddf674808e9e275fd6db",
+                                        "right": "0x303339366836432025f7413d0e766e45a87a4669fc9b2961b5a1a61d3ae2998"
+                                    },
+                                    "node_hash": "0x4809ea1d493c6918e63d232ef30bc487ea0846f1d9deb38a7e3858c35261a72"
+                                },
+                                {
+                                    "node": {
+                                        "left": "0x486906f25b25543b7f22f16250f10f5a7c179d6cdaffc62302d57f2e6c55c8d",
+                                        "right": "0x7d5602326c568deb85d54e413b0a0576b5cfe746bad9177a7f4726aac4f925f"
+                                    },
+                                    "node_hash": "0x26d3df9e5d4bdfde0079191fd11686ed0514e071780cad9fb3feead46b5db4f"
+                                },
+                                {
+                                    "node": {
+                                        "left": "0x398c9bc8dfb61fce9440d187a5b553e25b88460a886ae23e1e3d63be59815b0",
+                                        "right": "0x6afb43807224402f0b71bede96b0d9b2daa4231bc94df9fd13b5054549eac20"
+                                    },
+                                    "node_hash": "0x7d5602326c568deb85d54e413b0a0576b5cfe746bad9177a7f4726aac4f925f"
+                                },
+                                {
+                                    "node": {
+                                        "left": "0x6bcae1947bb721b17f72b79852e1db3c3112ddf8beab7fe39aac331e1355259",
+                                        "right": "0x4d3cb88d40ffb2e2eb9cda3df7c3be2a0f09b958f63f6c5ad715d4b781e7d4"
+                                    },
+                                    "node_hash": "0x69093d3dd55de20a494f97a05dd22becf8fdcfa5c8177fabdc24d805e62d23e"
+                                },
+                                {
+                                    "node": {
+                                        "left": "0x372f4a253f4577e1ca23e1904e73bb5fecb40117b625122372a68d5e60d468",
+                                        "right": "0x2f4b82e129dc9c189d775fccecb9718748e1548d9cefbbed2c9a3966624092a"
+                                    },
+                                    "node_hash": "0xca8784b17f57dae963848d8b81320ad53c8802558c0f62e25cc133739bd668"
+                                },
+                                {
+                                    "node": {
+                                        "left": "0x38df98bbcbb0916c2b9a5da7485baf20824ea805ef931131a661895f2948a43",
+                                        "right": "0x39e671b8a0dda2a0f48012b2f3e1a382c60f03072948312af62082487214a3"
+                                    },
+                                    "node_hash": "0x14217a1aec64fccdd6d69d169861b0752b32d4205e45fb74dc4acaf909b91e0"
+                                },
+                                {
+                                    "node": {
+                                        "left": "0x683e03438f247809e8bf1646009b28c069c33a5fc4b95c24faf90a26834ea8b",
+                                        "right": "0x75f06f714c686f51eec21a15fdf8c2f0e12629909005e91e89c0921c1c2f5aa"
+                                    },
+                                    "node_hash": "0x5d99aca900cea094bb2ddd1eaf6213234f5692e9623bca8a39b838fcc6336e7"
+                                },
+                                {
+                                    "node": {
+                                        "left": "0x69093d3dd55de20a494f97a05dd22becf8fdcfa5c8177fabdc24d805e62d23e",
+                                        "right": "0x7707b903eb8c05547d7e4426fb05a87b1597cebad2dc6916608d6d805536820"
+                                    },
+                                    "node_hash": "0x13d39e45ce701ebd5f251980ccdcfe70a589927c5c575b3bc30f86353c2c298"
+                                },
+                                {
+                                    "node": {
+                                        "left": "0x12b2847a9ab831552fd0d637f9d3f3a373234ce8a0504a40a3d09512a1268bb",
+                                        "right": "0x55e5f19421dad9a4aa09a1f7698914a6210ddcaf3a1af7482f8f4096c720005"
+                                    },
+                                    "node_hash": "0x372f4a253f4577e1ca23e1904e73bb5fecb40117b625122372a68d5e60d468"
+                                },
+                                {
+                                    "node": {
+                                        "left": "0x26d3df9e5d4bdfde0079191fd11686ed0514e071780cad9fb3feead46b5db4f",
+                                        "right": "0x2e39866563dfc9024491727bfaaf7a865dea27e64f318410ec885cc0702fd19"
+                                    },
+                                    "node_hash": "0x303339366836432025f7413d0e766e45a87a4669fc9b2961b5a1a61d3ae2998"
+                                },
+                                {
+                                    "node": {
+                                        "left": "0x6c5d87b8951f3a6906c7dd52faa72c1deabaa1fafbdc9fc33a689706bfe7c6e",
+                                        "right": "0x2fe93154982f83ee9a4e6498d464a448d8477fb1d2ca97402f509b922b7407b"
+                                    },
+                                    "node_hash": "0x24260681e6941b61203217cfcffd5c25b7dfdf181f56858622e228d684690f2"
+                                },
+                                {
+                                    "node": {
+                                        "child": "0x13d39e45ce701ebd5f251980ccdcfe70a589927c5c575b3bc30f86353c2c298",
+                                        "length": 3,
+                                        "path": "0x1"
+                                    },
+                                    "node_hash": "0x6afb43807224402f0b71bede96b0d9b2daa4231bc94df9fd13b5054549eac20"
+                                },
+                                {
+                                    "node": {
+                                        "left": "0x1a1017265f7fe34e36312b1337fa232cc541822246ff894025943977ebc25fa",
+                                        "right": "0x34ce62047e751f7bb914094c2800cbc56377c662d2da80a242efa30fdf3a8dd"
+                                    },
+                                    "node_hash": "0x45059c0259d3ce95cf00c8a15d4af8882a29fb2a35d1292c78ce1f751c551cc"
+                                },
+                                {
+                                    "node": {
+                                        "left": "0x24260681e6941b61203217cfcffd5c25b7dfdf181f56858622e228d684690f2",
+                                        "right": "0x237511826ff31ce53d588e9ba05c730bf790d9fd4308dc1dbc85b4a52c4d9fd"
+                                    },
+                                    "node_hash": "0x3546f9fdca36fd67b87b4ef5f7cb0d15d7324cac5aefde5b1bd8f17e7b44d6e"
+                                },
+                                {
+                                    "node": {
+                                        "left": "0x1586e8b2b7096e6251267a7f45b9dc4b9d289a3af909f7513e72c21f0f29227",
+                                        "right": "0x3d2616e490c8697141a88a7f2f4007823cbeaeb0ebcc10b878eac97869b96f9"
+                                    },
+                                    "node_hash": "0x683e03438f247809e8bf1646009b28c069c33a5fc4b95c24faf90a26834ea8b"
+                                },
+                                {
+                                    "node": {
+                                        "child": "0x71846da22e746a83d24f3818bdadf9443b7a518d886a78326b5a944744b0fde",
+                                        "length": 227,
+                                        "path": "0x704abaab412ea6881978415bfa4b5b7ee9439ae6e2af9b76c44f8c575"
+                                    },
+                                    "node_hash": "0x4d3cb88d40ffb2e2eb9cda3df7c3be2a0f09b958f63f6c5ad715d4b781e7d4"
+                                },
+                                {
+                                    "node": {
+                                        "left": "0x46f81e80c7c9fcaa4dbc11ff11a561eb868d6d1bc5b32364fd64897002c8290",
+                                        "right": "0x1793d4dc90da417663ca0668e5df5f8c214a9a77c21becd2c0854aa6d671ff2"
+                                    },
+                                    "node_hash": "0x26a21b6359be548ffe3fbe222215ff5e72ed592b4b15504efa5acf78f212e59"
+                                },
+                                {
+                                    "node": {
+                                        "left": "0x6b9d95b0edcdfbe4f0a916ecd26199ece60ae40a495f2cf986e2ee978971b30",
+                                        "right": "0x5d99aca900cea094bb2ddd1eaf6213234f5692e9623bca8a39b838fcc6336e7"
+                                    },
+                                    "node_hash": "0x1793d4dc90da417663ca0668e5df5f8c214a9a77c21becd2c0854aa6d671ff2"
+                                },
+                                {
+                                    "node": {
+                                        "left": "0x9e4d9a00b6ce939212b80ffc1eb5e812c3dc73bf78027f8b3cec71a2447021",
+                                        "right": "0x4809ea1d493c6918e63d232ef30bc487ea0846f1d9deb38a7e3858c35261a72"
+                                    },
+                                    "node_hash": "0x1a1017265f7fe34e36312b1337fa232cc541822246ff894025943977ebc25fa"
+                                },
+                                {
+                                    "node": {
+                                        "left": "0x14217a1aec64fccdd6d69d169861b0752b32d4205e45fb74dc4acaf909b91e0",
+                                        "right": "0x4921b0a56be8fb2c15fa2821a539b51379d7e3bc73e803afffe0c645b69f0ef"
+                                    },
+                                    "node_hash": "0x6c5d87b8951f3a6906c7dd52faa72c1deabaa1fafbdc9fc33a689706bfe7c6e"
+                                }
+                            ]
+                        },
+                        "contracts_storage_proofs": [
+                            [
+                                {
+                                    "node": {
+                                        "child": "0x42",
+                                        "length": 251,
+                                        "path": "0x206f38f7e4f15e87567361213c28f235cccdaa1d7fd34c9db1dfe9489c6a091"
+                                    },
+                                    "node_hash": "0x58d716d042a9f7b2cc3d9cdf9eeff12a2f62b2bf926c99311ace603562c3bd6"
+                                }
+                            ]
+                        ],
+                        "global_roots": {
+                            "block_hash": "0x6698b5f967ba14fe3bee0b4dd528c5bd8c37cb5636d982651760165f87e3e60",
+                            "classes_tree_root": "0x65043081b496b56337925177d50c017b19d31ce349b1a883eb4f96c7404b7da",
+                            "contracts_tree_root": "0x26a21b6359be548ffe3fbe222215ff5e72ed592b4b15504efa5acf78f212e59"
+                        }
+                    }
+                }),
+            ))
+            .mount(mock)
+            .await;
+    }
+
+    // Mock getNonce response
+    async fn mock_get_nonce(mock: &MockServer, nonce: &str) {
+        Mock::given(method("POST"))
+            .and(body_string_contains("starknet_getNonce"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "result": nonce,
+                    "id": 0
+                }),
+            ))
+            .mount(mock)
+            .await;
+    }
+
+    // Mock getClassHashAt response
+    async fn mock_get_class_hash_at(mock: &MockServer, class_hash: &str) {
+        Mock::given(method("POST"))
+            .and(body_string_contains("starknet_getClassHashAt"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "result": class_hash,
+                    "id": 0
+                }),
+            ))
+            .mount(mock)
+            .await;
+    }
+
+    // Mock getClass response
+    async fn mock_get_class(mock: &MockServer) {
+        Mock::given(method("POST"))
+            .and(body_string_contains("starknet_getClass"))
+            .respond_with(ResponseTemplate::new(200).set_body_json({
+                use serde_json::{json, Value};
+
+                // Build sierra_program array programmatically to avoid macro recursion limit
+                let sierra_program: Vec<Value> = vec![
+                    "0x1", "0x7", "0x0", "0x2", "0xb", "0x4", "0xa5", "0x5b", "0x19",
+                    "0x52616e6765436865636b", "0x800000000000000100000000000000000000000000000000",
+                    "0x456e756d", "0x800000000000000700000000000000000000000000000001", "0x0",
+                    "0x1e7cc030b6a62e51219c7055ff773a8dff8fb71637d893064207dc67ba74304",
+                    "0x436f6e7374", "0x800000000000000000000000000000000000000000000002", "0x1", "0x11", "0x2",
+                    "0x4661696c656420746f20646573657269616c697a6520706172616d202331",
+                    "0x4f7574206f6620676173", "0x416d6f756e742063616e6e6f742062652030",
+                    "0x496e70757420746f6f206c6f6e6720666f7220617267756d656e7473",
+                    "0x53746f726167654261736541646472657373",
+                    "0x800000000000000700000000000000000000000000000000", "0x537472756374",
+                    "0x800000000000000700000000000000000000000000000002",
+                    "0x145cc613954179acf89d43c94ed0e091828cbddcca83f5b408785785036d36d",
+                    "0x6", "0x4172726179", "0x800000000000000300000000000000000000000000000001",
+                    "0x536e617073686f74", "0x8",
+                    "0x1baeba72e79e9db2587cf44fedb2f3700b2075a5e8e39a562584862c4b71f62",
+                    "0x9", "0x2ee1e2b1b89f8c495f200e4956278a4d47395fe262f27b52e5865c9524c08c3",
+                    "0xa", "0xd", "0x753332", "0x53746f7261676541646472657373",
+                    "0x31448060506164e4d1df7635613bacfbea8af9c3dc85ea9a55935292a4acddc",
+                    "0x800000000000000f00000000000000000000000000000001",
+                    "0x16a4c8d7c05909052238a862d8cc3e7975bf05a07b3a69c6b28951083a6d672",
+                    "0x66656c74323532", "0x4e6f6e5a65726f", "0x4275696c74696e436f737473", "0x53797374656d",
+                    "0x800000000000000300000000000000000000000000000003", "0x10",
+                    "0x9931c641b913035ae674b400b61a51476d506bbe8bba2ff8a6272790aba9e6",
+                    "0xb", "0x15", "0x426f78", "0x4761734275696c74696e", "0x42",
+                    "0x7265766f6b655f61705f747261636b696e67", "0x77697468647261775f676173",
+                    "0x6272616e63685f616c69676e", "0x72656465706f7369745f676173",
+                    "0x7374727563745f6465636f6e737472756374", "0x73746f72655f74656d70", "0x18",
+                    "0x61727261795f736e617073686f745f706f705f66726f6e74", "0x756e626f78", "0x64726f70",
+                    "0x17", "0x66756e6374696f6e5f63616c6c", "0x3", "0x656e756d5f696e6974", "0x16", "0x14",
+                    "0x6765745f6275696c74696e5f636f737473", "0x13", "0x77697468647261775f6761735f616c6c",
+                    "0x72656e616d65", "0x656e61626c655f61705f747261636b696e67", "0x647570",
+                    "0x66656c743235325f69735f7a65726f", "0x6a756d70", "0x12",
+                    "0x73746f726167655f626173655f616464726573735f636f6e7374",
+                    "0x206f38f7e4f15e87567361213c28f235cccdaa1d7fd34c9db1dfe9489c6a091",
+                    "0x7374727563745f636f6e737472756374", "0xf", "0x736e617073686f745f74616b65",
+                    "0x73746f726167655f616464726573735f66726f6d5f62617365",
+                    "0x636f6e73745f61735f696d6d656469617465", "0xc", "0xe",
+                    "0x73746f726167655f726561645f73797363616c6c", "0x66656c743235325f616464",
+                    "0x73746f726167655f77726974655f73797363616c6c", "0x64697361626c655f61705f747261636b696e67",
+                    "0x61727261795f6e6577", "0x4", "0x5", "0x7", "0x61727261795f617070656e64",
+                    "0x10b", "0xffffffffffffffff", "0x8a", "0x80", "0x1b", "0x76", "0x1a", "0x1c", "0x1d",
+                    "0x34", "0x1e", "0x1f", "0x20", "0x21", "0x22", "0x23", "0x24", "0x25", "0x6d",
+                    "0x26", "0x27", "0x28", "0x29", "0x2a", "0x2b", "0x2c", "0x2d", "0x2e", "0x2f",
+                    "0x30", "0x31", "0x66", "0x32", "0x33", "0x35", "0x36", "0x37", "0x38", "0x39",
+                    "0x3a", "0x3b", "0x5f", "0x3c", "0x3d", "0x3e", "0x3f", "0x40", "0x41", "0x43",
+                    "0x44", "0x45", "0x46", "0x47", "0x48", "0x49", "0x4a", "0x4b", "0x4c", "0x4d",
+                    "0x4e", "0x4f", "0x50", "0x51", "0x52", "0x53", "0xe1", "0xa7", "0xd8", "0xcd",
+                    "0x94", "0xeb", "0xf3", "0xfb", "0x103", "0x9a9",
+                    "0xf0b0a0908070e0b0a0908070d0b0a0908070c0b0a09080706050403020100",
+                    "0x908071d091c0513121b091a051312190904180a0917161509140513121110",
+                    "0x1c052812022711260a0904251124230522121509210513121120111f050b1e",
+                    "0x1d09093405330532053105302f022e0a09042d2c092b092a05280319092909",
+                    "0x909391b0909390a0909351b0909350a0909380a0909373609093505090935",
+                    "0x5424109093505403e0909353f090935090b3e090b3d0b3c093b0a0909393a",
+                    "0x39054719090935290909392c0909343c3c093b05460a09094505440a090943",
+                    "0x94f054e150909434c0909344c0909394c09094d4c09094b4a0b0949480909",
+                    "0x4b190909391909094d0a0909560555055405530552510909351e0909355009",
+                    "0x939583c093b573c093b2c09094b2909094b050b3e090b3d2b09094b1d0909",
+                    "0x4f2c0909355809094f0a09095a59090934590909395909094d5909094b1d09",
+                    "0x150b5d58570b5c0b09050b0905055c090505055b0b09094f3c09094f570909",
+                    "0x57095c09570958051b095c093c09570519095c0958093c05055c09050b0559",
+                    "0x919093c05055c09050b0550095e2b1d0b5c0b1b09590519095c0919091505",
+                    "0x51091d051e095c091e0915051d095c091d091b0551095c092b0919051e095c",
+                    "0x5005055c094c092b05055c09050b050a095f294c0b5c0b1d09590551095c09",
+                    "0x41094c0541095c0905510548095c091e093c05055c0951091e05055c092909",
+                    "0x90a050b095c090b09290548095c094809150557095c09570958053f095c09",
+                    "0x95c091e093c05055c090a092b05055c09050b053f0b485757093f095c093f",
+                    "0xb3e2c573c3f053e095c093e0941052c095c092c0915053e095c090548052c",
+                    "0x562095c0951092c055f095c0936093c05055c09050b0561000b60363a0b5c",
+                    "0x55f095c095f0915053a095c093a09580563620b5c0962093a05055c09053e",
+                    "0x566095c095f093c05055c0962091e05055c09050b05650964055c0b630936",
+                    "0x56a095c0966091505055c0968095f0569680b5c096709610567095c090500",
+                    "0x65096505055c09050b05056d090563056c095c09690962056b095c090b0929",
+                    "0x97009680570095c096f0967056f095c090566056e095c095f093c05055c09",
+                    "0x74096c0574095c0973096b0573095c0972096a05055c097109690572710b5c",
+                    "0x7509700576095c0976096f056e095c096e09150576095c09056e0575095c09",
+                    "0x91505055c09050b05647c7b3c7a7978773c5c0b75760b6e57710575095c09",
+                    "0x91d057f095c097e096c057e095c090566057d095c0977093c0577095c0977",
+                    "0x6f057d095c097d09150581095c09056e0580095c0962790b720579095c0979",
+                    "0xb807f81787d58730580095c0980091d057f095c097f09700581095c098109",
+                    "0x3c0582095c0982091505055c09057405055c09050b058786853c8483820b5c",
+                    "0x7805055c098a0977052f8a0b5c098909760589095c0905750588095c098209",
+                    "0x53a095c093a0958058d095c098c097b058c095c098b0979058b095c092f09",
+                    "0xb058d83883a57098d095c098d090a0583095c098309290588095c09880915",
+                    "0x929056a095c098e0915058e095c0985093c0585095c0985091505055c0905",
+                    "0x5c0962091e05055c09050b05056d090563056c095c09870962056b095c0986",
+                    "0x5c097c0929056a095c098f0915058f095c097b093c057b095c097b09150505",
+                    "0x95c096c900b640590095c09057c05055c090574056c095c09640962056b09",
+                    "0x5c096b0929056a095c096a0915053a095c093a09580592095c0991094c0591",
+                    "0x3c05055c0951091e05055c09050b05926b6a3a570992095c0992090a056b09",
+                    "0x150500095c090009580595095c0994094c0594095c09057d0593095c096109",
+                    "0x50b05950b9300570995095c0995090a050b095c090b09290593095c099309",
+                    "0x5c0997094c0597095c09057e0596095c0919093c05055c0950092b05055c09",
+                    "0x998090a050b095c090b09290596095c099609150557095c09570958059809",
+                    "0x599095c0959093c05055c093c097f05055c09050b05980b9657570998095c",
+                    "0x599095c099909150515095c09150958059b095c099a094c059a095c09057d",
+                    "0x50b0905055c090505059b0b991557099b095c099b090a050b095c090b0929",
+                    "0x95c093c09570519095c0958093c05055c09050b0559150b9c58570b5c0b09",
+                    "0xb0550099d2b1d0b5c0b1b09590519095c091909150557095c09570958051b",
+                    "0x5c090551051e095c0919093c05055c092b095005055c091d092b05055c0905",
+                    "0x90b0929051e095c091e09150557095c09570958054c095c0951094c055109",
+                    "0x5055c0950092b05055c09050b054c0b1e5757094c095c094c090a050b095c",
+                    "0x50a095c090a09410529095c09290915050a095c0905480529095c0919093c",
+                    "0x566053e095c0941093c05055c09050b052c3f0b9e41480b5c0b0a29573c3f",
+                    "0x98305055c090009820561000b5c093609810536095c093a0980053a095c09",
+                    "0x9150565095c09056e0563095c0962096c0562095c095f096b055f095c0961",
+                    "0x710548095c094809580563095c096309700565095c0965096f053e095c093e",
+                    "0x566095c0966091505055c09050b056b6a693c9f6867663c5c0b63650b3e57",
+                    "0x6f095c09686e0b850568095c0968091d056e095c090575056c095c0966093c",
+                    "0x95c097209790572095c0971097805055c097009770571700b5c096f097605",
+                    "0x5c09670929056c095c096c09150548095c094809580574095c0973097b0573",
+                    "0x569095c0969091505055c09050b0574676c48570974095c0974090a056709",
+                    "0x78095c0977094c0577095c096b760b640576095c09057c0575095c0969093c",
+                    "0x95c0978090a056a095c096a09290575095c097509150548095c0948095805",
+                    "0x94c057b095c09057d0579095c092c093c05055c09050b05786a7548570978",
+                    "0xa050b095c090b09290579095c09790915053f095c093f0958057c095c097b",
+                    "0x5c0959093c05055c093c097f05055c09050b057c0b793f57097c095c097c09",
+                    "0x5c096409150515095c09150958057e095c097d094c057d095c09057d056409",
+                    "0x5095c090575057e0b641557097e095c097e090a050b095c090b0929056409",
+                    "0x3c095c09057c050b095c0909050b850509095c0909091d0509095c09058605",
+                    "0x905880505095c0905750557090957095c095709870557095c090b3c0b6405",
+                    "0x3c0b64053c095c09057c050b095c0909050b850509095c0909091d0509095c",
+                    "0x509095c0905890505095c0905750557090957095c095709870557095c090b",
+                    "0x95c090b3c0b64053c095c09057c050b095c0909050b850509095c0909091d",
+                    "0x909091d0509095c09058a0505095c0905750557090957095c095709870557",
+                    "0x9870557095c090b3c0b64053c095c09057c050b095c0909050b850509095c",
+                    "0x5571d3f360557053c0b09053e3f3605571d3f3605571557090957095c0957",
+                    "0xa42c0905a32c0905a22c0905a12c0905a03c0b09053e3f36",
+                ].into_iter().map(|s| Value::String(s.to_string())).collect();
+
+                json!({
+                    "jsonrpc": "2.0",
+                    "result": {
+                        "sierra_program": sierra_program,
+                        "contract_class_version": "0.1.0",
+                        "entry_points_by_type": {
+                            "CONSTRUCTOR": json!([]),
+                            "EXTERNAL": json!([
+                                {
+                                    "function_idx": 0,
+                                    "selector": "0x362398bec32bc0ebb411203221a35a0301193a96f317ebe5e40be9f60d15320"
+                                },
+                                {
+                                    "function_idx": 1,
+                                    "selector": "0x39e11d48192e4333233c7eb19d10ad67c362bb28580c604d67884c85da39695"
+                                }
+                            ]),
+                            "L1_HANDLER": json!([])
+                        },
+                        "abi": r#"[
+                            {
+                                "type": "impl",
+                                "name": "HelloStarknetImpl",
+                                "interface_name": "deploy::IHelloStarknet"
+                            },
+                            {
+                                "type": "interface",
+                                "name": "deploy::IHelloStarknet",
+                                "items": [
+                                    {
+                                        "type": "function",
+                                        "name": "increase_balance",
+                                        "inputs": [
+                                            {
+                                                "name": "amount",
+                                                "type": "core::felt252"
+                                            }
+                                        ],
+                                        "outputs": [],
+                                        "state_mutability": "external"
+                                    },
+                                    {
+                                        "type": "function",
+                                        "name": "get_balance",
+                                        "inputs": [],
+                                        "outputs": [
+                                            {
+                                                "type": "core::felt252"
+                                            }
+                                        ],
+                                        "state_mutability": "view"
+                                    }
+                                ]
+                            },
+                            {
+                                "type": "event",
+                                "name": "deploy::HelloStarknet::Event",
+                                "kind": "enum",
+                                "variants": []
+                            }
+                        ]"#
+                    },
+                    "id": 0
+                })
+            }))
+            .mount(mock)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn test_execute_with_non_zero_storage() {
+        // Test case: Execution with non-zero storage (requires proof)
+        let mock = MockServer::start().await;
+        MockServer::reset(&mock).await;
+        mock_spec_version_response(&mock).await;
+
+        // Mock storage with non-zero value (requires proof)
+        mock_get_storage_at(&mock, "0x42").await;
+        mock_get_proof(&mock).await;
+        mock_get_nonce(&mock, "0x0").await;
+        mock_get_class_hash_at(&mock, "0x0344d356a0ac8f4d35ee8c5bc89b421e3e6f55fa5f03849d92910f6c1630f9ae").await;
+        mock_get_class(&mock).await;
+
+        let config = get_mock_config(mock.uri());
+        let storage = Arc::new(MockStorageProvider::new());
+        let client = Client::new(&config, Http::new(), storage).await.unwrap();
+
+        let state = create_execute_test_state(123);
+        let function_call = FunctionCall {
+            contract_address: Address(Felt::try_new("0x06445b2f04abaab412ea6881978415bfa4b5b7ee9439ae6e2af9b76c44f8c575").unwrap()),
+            entry_point_selector: Felt::try_new("0x39e11d48192e4333233c7eb19d10ad67c362bb28580c604d67884c85da39695").unwrap(),
+            calldata: vec![],
+        };
+
+        let result = client.execute(function_call, state);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), vec![Felt::try_new("0x42").unwrap()]);
+    }
+
+    #[tokio::test]
+    async fn test_execute_success() {
+        // Test case: Successful execution with mocked RPC calls
+        let mock = MockServer::start().await;
+        mock_spec_version_response(&mock).await;
+
+        // Mock all required RPC calls for execution
+        // Storage will be zero, so no proof needed
+        mock_get_storage_at(&mock, "0x0").await;
+        mock_get_nonce(&mock, "0x0").await;
+        mock_get_class_hash_at(&mock, "0x0344d356a0ac8f4d35ee8c5bc89b421e3e6f55fa5f03849d92910f6c1630f9ae").await;
+        mock_get_class(&mock).await;
+
+        let config = get_mock_config(mock.uri());
+        let storage = Arc::new(MockStorageProvider::new());
+        let client = Client::new(&config, Http::new(), storage).await.unwrap();
+
+        let state = create_execute_test_state(321);
+        let function_call = FunctionCall {
+            contract_address: Address(Felt::try_new("0x06445b2f04abaab412ea6881978415bfa4b5b7ee9439ae6e2af9b76c44f8c575").unwrap()),
+            entry_point_selector: Felt::try_new("0x39e11d48192e4333233c7eb19d10ad67c362bb28580c604d67884c85da39695").unwrap(),
+            calldata: vec![],
+        };
+
+        let result = client.execute(function_call, state);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), vec![Felt::try_new("0x0").unwrap()]);
+    }
+
+    #[tokio::test]
+    async fn test_execute_rpc_error() {
+        // Test case: RPC call fails
+        let mock = MockServer::start().await;
+        mock_spec_version_response(&mock).await;
+
+        // Mock getStorageAt to return error
+        Mock::given(method("POST"))
+            .and(body_string_contains("starknet_getStorageAt"))
+            .respond_with(ResponseTemplate::new(500).set_body_json(
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "error": {"code": -32603, "message": "Internal error"},
+                    "id": 0
+                }),
+            ))
+            .mount(&mock)
+            .await;
+
+        let config = get_mock_config(mock.uri());
+        let storage = Arc::new(MockStorageProvider::new());
+        let client = Client::new(&config, Http::new(), storage).await.unwrap();
+
+        let state = create_execute_test_state(1000);
+        let function_call = FunctionCall {
+            contract_address: Address(Felt::try_new("0x123").unwrap()),
+            entry_point_selector: Felt::try_new("0x456").unwrap(),
+            calldata: vec![],
+        };
+
+        let result = client.execute(function_call, state);
+        assert!(result.is_err(), "Should return error when RPC call fails");
     }
 }

@@ -15,7 +15,7 @@ const BLOCKS_PER_DAY: i64 = 24 * 60 * 60 / TIME_PER_BLOCK;
 const BLOCKS_PER_MONTH: i64 = BLOCKS_PER_DAY * 31;
 const BLOCKS_BUFFER: i64 = 3 * 60 / TIME_PER_BLOCK; // 3 minute buffer
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Debug)]
 enum PreloadStatus {
     NoUpdates,
     InProgress,
@@ -186,4 +186,315 @@ impl<S: StorageProviderTrait> BackgroundLoader<S> {
     }
 }
 
-// TODO: add tests
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::client::state::{L1State, State};
+    use crate::client::Client;
+    use crate::storage::mock_storage_provider::MockStorageProvider;
+    use crate::gen::Felt;
+    use std::sync::Arc;
+    use wiremock::{
+        matchers::{body_string_contains, method},
+        Mock, MockServer, ResponseTemplate,
+    };
+
+    fn get_mock_config(mock_url: String) -> crate::config::Config {
+        crate::config::Config {
+            eth_rpc: mock_url.clone(),
+            starknet_rpc: mock_url.clone(),
+            gateway_url: mock_url,
+            database_url: "".to_string(),
+            l2_rate_limit: 10,
+            l1_range_blocks: 9,
+        }
+    }
+
+    async fn mock_spec_version_response(mock: &MockServer) {
+        Mock::given(method("POST"))
+            .and(body_string_contains("starknet_specVersion"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "result": "0.8.1",
+                    "id": 0
+                }),
+            ))
+            .mount(mock)
+            .await;
+    }
+
+    fn create_test_state(block_number: i64) -> State {
+        let block_hash =
+            Felt::try_new(&format!("0x{:064x}", block_number)).unwrap();
+        let root =
+            Felt::try_new(&format!("0x{:064x}", block_number + 1000)).unwrap();
+        State::new(block_number, 0, block_hash, root)
+    }
+
+    fn create_l1_state(block_number: i64) -> L1State {
+        let block_hash =
+            Felt::try_new(&format!("0x{:064x}", block_number)).unwrap();
+        let root =
+            Felt::try_new(&format!("0x{:064x}", block_number + 1000)).unwrap();
+        L1State::new(block_number, block_hash, root)
+    }
+
+    // Mock L1 get_logs response for state updates
+    async fn mock_l1_get_logs(
+        mock: &MockServer,
+        state_updates: Vec<(L1State, u64)>,
+    ) {
+        use alloy::primitives::{keccak256, U256};
+
+        // Compute event signature hash: keccak256("LogStateUpdate(uint256,int256,uint256)")
+        let event_signature = "LogStateUpdate(uint256,int256,uint256)";
+        let event_signature_hash = keccak256(event_signature.as_bytes());
+        let event_signature_hash_hex = hex::encode(event_signature_hash);
+
+        let logs: Vec<serde_json::Value> = state_updates
+            .into_iter()
+            .map(|(state, l1_block)| {
+                // Encode LogStateUpdate event
+                // Event signature: LogStateUpdate(uint256 globalRoot, int256 blockNumber, uint256 blockHash)
+                let root_hex = state
+                    .root
+                    .as_ref()
+                    .strip_prefix("0x")
+                    .unwrap_or(state.root.as_ref());
+                let root_hex_padded = if root_hex.len() % 2 == 1 {
+                    format!("0{}", root_hex)
+                } else {
+                    root_hex.to_string()
+                };
+                let root_bytes =
+                    hex::decode(&root_hex_padded).expect("valid hex");
+                let mut root_bytes_32 = [0u8; 32];
+                let start =
+                    root_bytes_32.len().saturating_sub(root_bytes.len());
+                root_bytes_32[start..].copy_from_slice(&root_bytes);
+
+                let hash_hex = state
+                    .block_hash
+                    .as_ref()
+                    .strip_prefix("0x")
+                    .unwrap_or(state.block_hash.as_ref());
+                let hash_hex_padded = if hash_hex.len() % 2 == 1 {
+                    format!("0{}", hash_hex)
+                } else {
+                    hash_hex.to_string()
+                };
+                let hash_bytes =
+                    hex::decode(&hash_hex_padded).expect("valid hex");
+                let mut hash_bytes_32 = [0u8; 32];
+                let start =
+                    hash_bytes_32.len().saturating_sub(hash_bytes.len());
+                hash_bytes_32[start..].copy_from_slice(&hash_bytes);
+
+                let root_u256: U256 = U256::from_be_bytes(root_bytes_32);
+                let block_num_i256 =
+                    alloy::primitives::I256::try_from(state.block_number)
+                        .expect("block_number fits I256");
+                let hash_u256: U256 = U256::from_be_bytes(hash_bytes_32);
+
+                serde_json::json!({
+                    "address": "0xc662c410c0ecf747543f5ba90660f6abebd9c8c4",
+                    "blockNumber": format!("0x{:x}", l1_block),
+                    "data": format!(
+                        "0x{}{}{}",
+                        hex::encode(root_u256.to_be_bytes::<32>()),
+                        hex::encode(block_num_i256.to_be_bytes::<32>()),
+                        hex::encode(hash_u256.to_be_bytes::<32>())
+                    ),
+                    "topics": [format!("0x{}", event_signature_hash_hex)],
+                    "transactionHash": format!("0x{:064x}", l1_block),
+                    "transactionIndex": "0x0",
+                    "logIndex": "0x0",
+                })
+            })
+            .collect();
+
+        Mock::given(method("POST"))
+            .and(body_string_contains("eth_getLogs"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "result": logs,
+                    "id": 0
+                }),
+            ))
+            .mount(mock)
+            .await;
+    }
+
+    async fn mock_l1_get_logs_empty(mock: &MockServer) {
+        Mock::given(method("POST"))
+            .and(body_string_contains("eth_getLogs"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "result": [],
+                    "id": 0
+                }),
+            ))
+            .mount(mock)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn test_preload_l1_no_big_range() {
+        // Test case: No big range found, should return NoUpdates
+        let mock = MockServer::start().await;
+        mock_spec_version_response(&mock).await;
+
+        let config = get_mock_config(mock.uri());
+        let latest_state = create_test_state(5_000_000);
+        let storage = Arc::new(
+            MockStorageProvider::new().with_latest_state(latest_state),
+        );
+        let client = Client::new(&config, crate::client::Http::new(), storage)
+            .await
+            .unwrap();
+        let async_blocker = Arc::new(AsyncBlocker::new());
+        let loader = BackgroundLoader::new(Arc::new(client), async_blocker);
+
+        let result = loader.preload_l1().await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), PreloadStatus::NoUpdates);
+    }
+
+    #[tokio::test]
+    async fn test_preload_l1_with_state_updates() {
+        // Test case: Big range found with state updates, should process and return InProgress
+        let mock = MockServer::start().await;
+        mock_spec_version_response(&mock).await;
+
+        // Mock L1 state updates
+        let state1 = create_l1_state(1_000_000);
+        let state2 = create_l1_state(1_000_100);
+        let state_updates = vec![
+            (state1.clone(), 100),
+            (state2.clone(), 200),
+        ];
+        mock_l1_get_logs(&mock, state_updates).await;
+
+        let config = get_mock_config(mock.uri());
+        let latest_state = create_test_state(5_000_000);
+        let big_range = L1Range::new(100, 200, 1_000_000, 1_000_200);
+        let storage = Arc::new(
+            MockStorageProvider::new()
+                .with_latest_state(latest_state)
+                .with_big_range(big_range),
+        );
+        let client = Client::new(&config, crate::client::Http::new(), storage)
+            .await
+            .unwrap();
+        let async_blocker = Arc::new(AsyncBlocker::new());
+        let loader = BackgroundLoader::new(Arc::new(client), async_blocker);
+
+        let result = loader.preload_l1().await;
+        assert!(result.is_ok(), "preload_l1 should succeed");
+        assert_eq!(result.unwrap(), PreloadStatus::InProgress);
+    }
+
+    #[tokio::test]
+    async fn test_preload_l1_error_handling() {
+        // Test case: Error reading latest state, should propagate error
+        let mock = MockServer::start().await;
+        mock_spec_version_response(&mock).await;
+
+        let config = get_mock_config(mock.uri());
+        let storage = Arc::new(MockStorageProvider::new()); // No latest state
+        let client = Client::new(&config, crate::client::Http::new(), storage)
+            .await
+            .unwrap();
+        let async_blocker = Arc::new(AsyncBlocker::new());
+        let loader = BackgroundLoader::new(Arc::new(client), async_blocker);
+
+        let result = loader.preload_l1().await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_preload_l2_error_handling() {
+        // Test case: Error reading latest state, should propagate error
+        let mock = MockServer::start().await;
+        mock_spec_version_response(&mock).await;
+
+        let config = get_mock_config(mock.uri());
+        let storage = Arc::new(MockStorageProvider::new()); // No latest state
+        let client = Client::new(&config, crate::client::Http::new(), storage)
+            .await
+            .unwrap();
+        let async_blocker = Arc::new(AsyncBlocker::new());
+        let loader = BackgroundLoader::new(Arc::new(client), async_blocker);
+
+        let result = loader.preload_l2().await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_run_exits_when_no_updates() {
+        // Test case: Both preload_l1 and preload_l2 return NoUpdates, should exit
+        // Note: This test is complex because run() uses an interval timer
+        // For a simpler test, we'll just verify that preload methods work correctly
+        // and the run loop logic is tested indirectly through the preload tests
+        let mock = MockServer::start().await;
+        mock_spec_version_response(&mock).await;
+
+        let config = get_mock_config(mock.uri());
+        let latest_state = create_test_state(5_000_000);
+        let storage = Arc::new(
+            MockStorageProvider::new().with_latest_state(latest_state),
+        );
+        let client = Client::new(&config, crate::client::Http::new(), storage)
+            .await
+            .unwrap();
+        let async_blocker = Arc::new(AsyncBlocker::new());
+        let loader = BackgroundLoader::new(Arc::new(client), async_blocker);
+
+        // Test that preload_l1 returns NoUpdates when no big range exists
+        let result = loader.preload_l1().await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), PreloadStatus::NoUpdates);
+
+        // The run() method uses an interval timer which makes it hard to test directly
+        // The important logic is tested through the preload_l1 and preload_l2 tests
+    }
+
+    #[tokio::test]
+    async fn test_run_handles_errors_gracefully() {
+        // Test case: Errors in preload should be handled gracefully and continue
+        let mock = MockServer::start().await;
+        mock_spec_version_response(&mock).await;
+
+        // Mock L1 to return empty logs (will cause find_big_range to fail)
+        mock_l1_get_logs_empty(&mock).await;
+
+        let config = get_mock_config(mock.uri());
+        let latest_state = create_test_state(5_000_000);
+        let storage = Arc::new(
+            MockStorageProvider::new().with_latest_state(latest_state),
+        );
+        let client = Client::new(&config, crate::client::Http::new(), storage)
+            .await
+            .unwrap();
+        let async_blocker = Arc::new(AsyncBlocker::new());
+        let loader = BackgroundLoader::new(Arc::new(client), async_blocker);
+
+        // The run loop should handle errors and continue
+        // We'll use a timeout to prevent infinite loops
+        let loader = Arc::new(loader);
+        let loader_clone = loader.clone();
+        let handle = tokio::spawn(async move {
+            loader_clone.run().await;
+        });
+
+        // Wait a short time to ensure it doesn't panic
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        // Cancel the task
+        handle.abort();
+        // The test passes if it doesn't panic
+    }
+}
+

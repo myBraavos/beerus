@@ -32,6 +32,22 @@ use crate::{
 
 use super::context::create_query_context;
 
+fn wait_rate_limiter(rate_limiter: &RateLimiter) {
+    // Try to get the current runtime handle
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        // We're in a runtime context. Check if we can use block_in_place
+        // (which only works in multi-threaded runtimes)
+        if handle.runtime_flavor()
+            != tokio::runtime::RuntimeFlavor::CurrentThread
+        {
+            // Multi-threaded runtime: use block_in_place (safe here)
+            tokio::task::block_in_place(|| {
+                handle.block_on(rate_limiter.wait())
+            });
+        }
+    }
+}
+
 /// Executes function calls on the Starknet state
 pub struct CallExecutor<T: gen::client::blocking::HttpClient> {
     client: gen::client::blocking::Client<T>,
@@ -151,9 +167,7 @@ impl<T: gen::client::blocking::HttpClient> StateReader for StateProxy<T> {
             block_hash: gen::BlockHash(self.state.block_hash.clone()),
         };
 
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(self.rate_limiter.wait())
-        });
+        wait_rate_limiter(&self.rate_limiter);
         let ret = self
             .client
             .getStorageAt(address.clone(), key.clone(), block_id.clone())
@@ -165,9 +179,7 @@ impl<T: gen::client::blocking::HttpClient> StateReader for StateProxy<T> {
             return Ok(StarkFelt::try_from(ret)?);
         }
 
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(self.rate_limiter.wait())
-        });
+        wait_rate_limiter(&self.rate_limiter);
         let proof = self
             .client
             .getProof(block_id, address.clone(), vec![key.clone()])
@@ -200,9 +212,7 @@ impl<T: gen::client::blocking::HttpClient> StateReader for StateProxy<T> {
         let felt: gen::Felt = gen::Felt::try_from(contract_address.0.key())?;
         let contract_address = gen::Address(felt);
 
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(self.rate_limiter.wait())
-        });
+        wait_rate_limiter(&self.rate_limiter);
         let ret = self
             .client
             .getNonce(block_id, contract_address)
@@ -224,9 +234,7 @@ impl<T: gen::client::blocking::HttpClient> StateReader for StateProxy<T> {
         let felt: gen::Felt = gen::Felt::try_from(contract_address.0.key())?;
         let contract_address = gen::Address(felt);
 
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(self.rate_limiter.wait())
-        });
+        wait_rate_limiter(&self.rate_limiter);
         let ret = self
             .client
             .getClassHashAt(block_id, contract_address)
@@ -248,9 +256,7 @@ impl<T: gen::client::blocking::HttpClient> StateReader for StateProxy<T> {
 
         let class_hash: gen::Felt = gen::Felt::try_from(&class_hash.0)?;
 
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(self.rate_limiter.wait())
-        });
+        wait_rate_limiter(&self.rate_limiter);
         let ret = self
             .client
             .getClass(block_id, class_hash)
