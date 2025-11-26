@@ -1087,6 +1087,7 @@ pub mod gen {
         use super::Felt;
         use once_cell::sync::Lazy;
         use regex::Regex;
+        use std::fmt;
 
         static FELT_REGEX: Lazy<Regex> = Lazy::new(|| {
             Regex::new("^0x(0|[a-fA-F1-9]{1}[a-fA-F0-9]{0,62})$")
@@ -1143,6 +1144,12 @@ pub mod gen {
         impl AsRef<String> for Felt {
             fn as_ref(&self) -> &String {
                 &self.0
+            }
+        }
+
+        impl fmt::Display for Felt {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                write!(f, "{}", self.0)
             }
         }
     }

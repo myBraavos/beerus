@@ -249,7 +249,8 @@ async fn execute_sync(
 
         assert_eq!(
             stored_state.block_hash, l1_state.block_hash,
-            "Stored L2 state does not match L1 state"
+            "The state committed on L1 does not match the state the light client processed at block {}. L1 hash: {}, L2 hash: {}",
+            l1_state.block_number, l1_state.block_hash, stored_state.block_hash
         );
 
         beerus.store_latest_l1_range(&l1_state).await?;
