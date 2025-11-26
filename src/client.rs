@@ -5,7 +5,9 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 
 use crate::background_loader::async_blocker::AsyncBlocker;
-use crate::client::block_hash::validate_block_hash;
+use crate::client::block_hash::{
+    validate_block_hash, validate_block_hash_from_header,
+};
 use crate::client::l1_range::L1Range;
 use crate::client::rate_limiter::RateLimiter;
 use crate::client::state::{GatewayState, L1State};
@@ -14,8 +16,11 @@ use crate::config::Config;
 use crate::eth::core_contract::L1CoreContract;
 use crate::feeder::GatewayClient;
 use crate::gen::client::Client as StarknetClient;
-use crate::gen::{gen, BlockId, BlockTag, Felt, FunctionCall, Rpc};
+use crate::gen::{
+    gen, BlockHeader, BlockId, BlockTag, Felt, FunctionCall, Rpc,
+};
 use crate::gen::{BlockHash, BlockNumber, BlockWithReceipts, StateUpdate};
+use crate::r#gen::BlockWithTxHashes;
 use crate::storage::storage_trait::StorageProviderTrait;
 use crate::util::with_retry;
 
@@ -31,7 +36,7 @@ pub use state::State;
 pub use utils::as_felt;
 
 const MIN_RPC_SPEC_VERSION: &str = "0.8.1";
-const MAX_STARKNET_VERSION: &str = "0.14.1";
+const COMMITMENTS_RPC_SPEC_VERSION: &str = "0.10.2";
 pub const FIRST_SUPPORTED_BLOCK_NUMBER: i64 = 1_000_000;
 
 type L1LockMap = Arc<RwLock<HashMap<(i64, i64), Arc<Mutex<()>>>>>;
@@ -53,6 +58,7 @@ pub struct Client<
     config: Config,
     rate_limiter: RateLimiter,
     l1_locks: L1LockMap,
+    spec_version: semver::Version,
 }
 
 impl<
@@ -71,9 +77,9 @@ impl<
     ) -> Result<Self> {
         let starknet = StarknetClient::new(&config.starknet_rpc, http.clone());
         let rpc_spec_version = starknet.specVersion().await?;
-        let version1 = semver::Version::parse(&rpc_spec_version)?;
-        let version2 = semver::Version::parse(MIN_RPC_SPEC_VERSION)?;
-        if version1 < version2 {
+        let spec_version = semver::Version::parse(&rpc_spec_version)?;
+        let min_spec_version = semver::Version::parse(MIN_RPC_SPEC_VERSION)?;
+        if spec_version < min_spec_version {
             eyre::bail!("RPC spec version mismatch: expected {MIN_RPC_SPEC_VERSION} but got {rpc_spec_version}");
         }
         let gateway = Arc::new(GatewayClient::new(&config.gateway_url)?);
@@ -89,6 +95,7 @@ impl<
             config: config.clone(),
             rate_limiter,
             l1_locks,
+            spec_version,
         })
     }
 
@@ -121,6 +128,11 @@ impl<
     /// Get the configuration
     pub fn config(&self) -> &Config {
         &self.config
+    }
+
+    /// Get the spec version
+    pub fn spec_version(&self) -> &semver::Version {
+        &self.spec_version
     }
 
     /// Execute a function call on the Starknet state
@@ -197,52 +209,38 @@ impl<
         block_hash: &Felt,
         prev_block_hash: Option<Felt>,
     ) -> Result<State> {
-        // Step 1: Retrieve block with receipts from the Starknet RPC using the given block hash.
+        // Step 1: Retrieve block header from the Starknet RPC using the given block hash.
         let block_id =
             BlockId::BlockHash { block_hash: BlockHash(block_hash.clone()) };
-        let block: BlockWithReceipts = self
-            .starknet()
-            .await
-            .getBlockWithReceipts(block_id)
+
+        let results: Vec<BlockHeader> = if self.is_spec_with_commitments() {
+            self.get_validated_block_headers(vec![block_id], None).await?
+        } else {
+            self.get_validated_block_headers_without_commitments(
+                vec![block_id],
+                None,
+            )
             .await?
-            .try_into()?;
+        };
+
+        let Some(block_header) = results.first() else {
+            eyre::bail!("No blocks received");
+        };
 
         // Step 2: Validate the parent block hash if `prev_block_hash` is supplied.
-        let parent_block_hash = block.block_header.parent_hash.0.clone();
+        let parent_block_hash = block_header.parent_hash.0.clone();
         if let Some(prev_block_hash) = prev_block_hash {
             if parent_block_hash != prev_block_hash {
                 eyre::bail!("Prev block hash mismatch: expected {prev_block_hash:?} but got {parent_block_hash:?}");
             }
         }
 
-        // Step 3: Ensure Starknet protocol version isn't above max supported.
-        let starknet_version =
-            semver::Version::parse(&block.block_header.starknet_version)?;
-        let max_starknet_version =
-            semver::Version::parse(MAX_STARKNET_VERSION)?;
-        if starknet_version > max_starknet_version {
-            eyre::bail!("Unsupported starknet version: {starknet_version}, max supported: {MAX_STARKNET_VERSION}");
-        }
-
-        // Step 4: Fetch state update for block by number.
-        let state_update = self
-            .starknet()
-            .await
-            .getStateUpdate(gen::BlockId::BlockNumber {
-                block_number: block.block_header.block_number.clone(),
-            })
-            .await?
-            .try_into()?;
-
-        // Step 5: Validate relationship between block and state update.
-        validate_block_hash(&block, &state_update, block_hash)?;
-
-        // Step 6: Construct local minimal state and persist it.
+        // Step 4: Construct local minimal state and persist it.
         let state = State::new(
-            *block.block_header.block_number.as_ref(),
-            *block.block_header.timestamp.as_ref(),
-            block.block_header.block_hash.0,
-            block.block_header.new_root,
+            *block_header.block_number.as_ref(),
+            *block_header.timestamp.as_ref(),
+            block_header.block_hash.0.clone(),
+            block_header.new_root.clone(),
         );
         self.storage().write_state(&state).await?;
         Ok(state)
@@ -280,7 +278,126 @@ impl<
             })
             .collect();
 
-        // Step 2: Fetch each block and corresponding state update in parallel, using a rate limiter
+        // Step 2: Get blocks data from rpc and calculate block hashes
+        let results: Vec<BlockHeader> = if self.is_spec_with_commitments() {
+            self.get_validated_block_headers(block_ids, async_blocker.clone())
+                .await?
+        } else {
+            self.get_validated_block_headers_without_commitments(
+                block_ids,
+                async_blocker.clone(),
+            )
+            .await?
+        };
+
+        // Step 3: Verify parent hashes form a contiguous chain
+        let mut prev_block_hash = start_state.block_hash.clone();
+        for block_header in &results {
+            if block_header.parent_hash.0 != prev_block_hash {
+                eyre::bail!("Prev block hash mismatch: expected {prev_block_hash:?} but got {:?}", block_header.parent_hash.0.as_ref());
+            }
+            prev_block_hash = block_header.block_hash.0.clone();
+        }
+
+        // Step 4: Verify last block hash matches the ending state block hash
+        let Some(last_block_header) = results.last() else {
+            eyre::bail!("No blocks received");
+        };
+        if last_block_header.block_hash.0 != end_state.block_hash {
+            eyre::bail!(
+                "End block hash mismatch: expected {:?} but got {:?}",
+                end_state.block_hash,
+                last_block_header.block_hash.0.as_ref()
+            );
+        }
+
+        // Step 5: Store all verified states to storage
+        for block_header in results {
+            let state = State::new(
+                *block_header.block_number.as_ref(),
+                *block_header.timestamp.as_ref(),
+                block_header.block_hash.0,
+                block_header.new_root,
+            );
+            self.storage().write_state(&state).await?;
+        }
+
+        tracing::debug!("range verified");
+        Ok(())
+    }
+
+    async fn get_validated_block_headers(
+        &self,
+        block_ids: Vec<BlockId>,
+        async_blocker: Option<Arc<AsyncBlocker>>,
+    ) -> Result<Vec<BlockHeader>> {
+        // Step 1: Fetch each block and corresponding state update in parallel, using a rate limiter
+        let responses: Vec<BlockHeader> = futures::stream::iter(block_ids)
+            .map(|block_id| {
+                let starknet = self.starknet.clone();
+                let rate_limiter = self.rate_limiter();
+                let async_blocker = async_blocker.clone();
+                async move {
+                    tracing::debug!("requesting block {:?}", block_id);
+                    if let Some(async_blocker) = async_blocker {
+                        async_blocker.wait_for_unlock().await;
+                    }
+                    with_retry(|| async {
+                        rate_limiter.wait().await;
+                        let block: BlockWithTxHashes = starknet
+                            .getBlockWithTxHashes(block_id.clone())
+                            .await?
+                            .try_into()?;
+                        Ok(block.block_header)
+                    })
+                    .await
+                }
+            })
+            .buffer_unordered(10)
+            .try_collect()
+            .await?;
+
+        // Step 2: For each fetched block header, validate block hash in parallel
+        let mut results: Vec<BlockHeader> = futures::stream::iter(responses)
+            .map(|block_header| {
+                let async_blocker = async_blocker.clone();
+                async move {
+                    if let Some(async_blocker) = async_blocker {
+                        async_blocker.wait_for_unlock().await;
+                    }
+                    tracing::debug!(
+                        "validating block hash for block {}",
+                        block_header.block_number.0
+                    );
+                    let block_header_copy = block_header.clone();
+                    // Validate in a blocking thread since it may be CPU-heavy
+                    tokio::task::spawn_blocking(move || {
+                        validate_block_hash_from_header(
+                            &block_header,
+                            &block_header.block_hash.0,
+                        )?;
+                        Ok::<(), eyre::Error>(())
+                    })
+                    .await??;
+                    Ok::<BlockHeader, eyre::Error>(block_header_copy)
+                }
+            })
+            .buffer_unordered(100)
+            .try_collect()
+            .await?;
+
+        // Step 3: Sort results by block number (to guarantee sequential checking)
+        results.sort_by_key(|block_header| block_header.block_number.0);
+
+        Ok(results)
+    }
+
+    async fn get_validated_block_headers_without_commitments(
+        &self,
+        block_ids: Vec<BlockId>,
+        async_blocker: Option<Arc<AsyncBlocker>>,
+    ) -> Result<Vec<BlockHeader>> {
+        // Step 1: Fetch each block and corresponding state update in parallel, using a rate limiter
         let responses: Vec<(BlockWithReceipts, StateUpdate)> =
             futures::stream::iter(block_ids)
                 .map(|block_id| {
@@ -314,74 +431,40 @@ impl<
                 .try_collect()
                 .await?;
 
-        // Step 3: For each fetched (block,state_update), validate block hash in parallel
-        let mut results: Vec<BlockWithReceipts> =
-            futures::stream::iter(responses)
-                .map(|(block, state_update)| {
-                    let async_blocker = async_blocker.clone();
-                    async move {
-                        if let Some(async_blocker) = async_blocker {
-                            async_blocker.wait_for_unlock().await;
-                        }
-                        tracing::debug!(
-                            "validating block hash for block {}",
-                            block.block_header.block_number.0
-                        );
-                        let block1 = block.clone();
-                        // Validate in a blocking thread since it may be CPU-heavy
-                        let _ = tokio::task::spawn_blocking(move || {
-                            validate_block_hash(
-                                &block,
-                                &state_update,
-                                &block.block_header.block_hash.0,
-                            )?;
-                            Ok::<(), eyre::Error>(())
-                        })
-                        .await?;
-                        Ok::<BlockWithReceipts, eyre::Error>(block1)
+        // Step 2: For each fetched (block,state_update), validate block hash in parallel
+        let mut results: Vec<BlockHeader> = futures::stream::iter(responses)
+            .map(|(block, state_update)| {
+                let async_blocker = async_blocker.clone();
+                async move {
+                    if let Some(async_blocker) = async_blocker {
+                        async_blocker.wait_for_unlock().await;
                     }
-                })
-                .buffer_unordered(100)
-                .try_collect()
-                .await?;
+                    tracing::debug!(
+                        "validating block hash for block {}",
+                        block.block_header.block_number.0
+                    );
+                    let block1 = block.clone();
+                    // Validate in a blocking thread since it may be CPU-heavy
+                    tokio::task::spawn_blocking(move || {
+                        validate_block_hash(
+                            &block,
+                            &state_update,
+                            &block.block_header.block_hash.0,
+                        )?;
+                        Ok::<(), eyre::Error>(())
+                    })
+                    .await??;
+                    Ok::<BlockHeader, eyre::Error>(block1.block_header)
+                }
+            })
+            .buffer_unordered(100)
+            .try_collect()
+            .await?;
 
-        // Step 4: Sort results by block number (to guarantee sequential checking)
-        results.sort_by_key(|block| block.block_header.block_number.0);
+        // Step 3: Sort results by block number (to guarantee sequential checking)
+        results.sort_by_key(|block_header| block_header.block_number.0);
 
-        // Step 5: Verify parent hashes form a contiguous chain
-        let mut prev_block_hash = start_state.block_hash.clone();
-        for block in &results {
-            if block.block_header.parent_hash.0 != prev_block_hash {
-                eyre::bail!("Prev block hash mismatch: expected {prev_block_hash:?} but got {:?}", block.block_header.parent_hash.0.as_ref());
-            }
-            prev_block_hash = block.block_header.block_hash.0.clone();
-        }
-
-        // Step 6: Verify last block hash matches the ending state block hash
-        let Some(last_block) = results.last() else {
-            eyre::bail!("No blocks received");
-        };
-        if last_block.block_header.block_hash.0 != end_state.block_hash {
-            eyre::bail!(
-                "End block hash mismatch: expected {:?} but got {:?}",
-                end_state.block_hash,
-                last_block.block_header.block_hash.0.as_ref()
-            );
-        }
-
-        // Step 7: Store all verified states to storage
-        for block in results {
-            let state = State::new(
-                *block.block_header.block_number.as_ref(),
-                *block.block_header.timestamp.as_ref(),
-                block.block_header.block_hash.0,
-                block.block_header.new_root,
-            );
-            self.storage().write_state(&state).await?;
-        }
-
-        tracing::debug!("range verified");
-        Ok(())
+        Ok(results)
     }
 
     /// Retrieves the state for a given block identifier (block number, block hash, or block tag).
@@ -780,6 +863,12 @@ impl<
 
         Ok(())
     }
+
+    fn is_spec_with_commitments(&self) -> bool {
+        self.spec_version
+            >= semver::Version::parse(COMMITMENTS_RPC_SPEC_VERSION)
+                .unwrap_or(semver::Version::new(0, 0, 0))
+    }
 }
 
 #[cfg(test)]
@@ -984,22 +1073,33 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_get_verified_state_invalid_unsupported_starknet_version() {
+    async fn test_get_verified_state_with_commitments() {
         let block_hash = Felt::try_new(
-            "0x1a3ef8f9469ee2f4612717b1b6fb1314c82d8267ae175b71e218b1123294947",
+            "0xdeb815f91f135a1abcf17e52770a0e59418b8b02cea3698d1006803bde4ab5",
         )
         .unwrap();
+        let prev_block_hash = Felt::try_new("0x456").unwrap();
 
         let mock = MockServer::start().await;
-        mock_spec_version_response(&mock).await;
         Mock::given(method("POST"))
-            .and(body_string_contains("starknet_getBlockWithReceipts"))
+            .and(body_string_contains("starknet_specVersion"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "result": "0.10.2",
+                    "id": 0
+                }),
+            ))
+            .mount(&mock)
+            .await;
+        Mock::given(method("POST"))
+            .and(body_string_contains("starknet_getBlockWithTxHashes"))
             .respond_with(ResponseTemplate::new(200).set_body_json(
                 serde_json::json!({
                     "jsonrpc": "2.0",
                     "result": {
                         "status": "ACCEPTED_ON_L2",
-                        "block_hash": "0x1a3ef8f9469ee2f4612717b1b6fb1314c82d8267ae175b71e218b1123294947",
+                        "block_hash": "0xdeb815f91f135a1abcf17e52770a0e59418b8b02cea3698d1006803bde4ab5",
                         "parent_hash": "0x456",
                         "block_number": 100,
                         "new_root": "0x5bc87df12fc2a96a350c31cf8b93601c3b33521879df49a107a426e36b71e68",
@@ -1014,11 +1114,18 @@ mod tests {
                             "price_in_wei": "0x2d"
                         },
                         "l1_da_mode": "BLOB",
-                        "starknet_version": "0.15.0",
+                        "starknet_version": "0.14.0",
                         "l2_gas_price": {
                             "price_in_fri": "0xb2d05e00",
                             "price_in_wei": "0x2010a"
                         },
+                        "event_commitment": "0x321",
+                        "transaction_commitment": "0x345",
+                        "receipt_commitment": "0x542",
+                        "state_diff_commitment": "0x176",
+                        "event_count": 1,
+                        "transaction_count": 2,
+                        "state_diff_length": 3,
                         "transactions": []
                     },
                     "id": 0
@@ -1026,20 +1133,17 @@ mod tests {
             ))
             .mount(&mock)
             .await;
-        mock_get_state_update_response(&mock).await;
 
         let config = get_mock_config(mock.uri());
         let storage = Arc::new(MockStorageProvider::new());
         let client = Client::new(&config, Http::new(), storage).await.unwrap();
 
-        let result = client.get_verified_state(&block_hash, None).await;
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Unsupported starknet version"),
-            "Expected unsupported starknet version error"
-        );
+        let result =
+            client.get_verified_state(&block_hash, Some(prev_block_hash)).await;
+        // assert!(result.is_ok(), "Expected successful state verification");
+        let state = result.unwrap();
+        assert_eq!(state.block_number, 100);
+        assert_eq!(state.block_hash, block_hash);
     }
 
     ///----- L1 range tests -----
@@ -1704,7 +1808,8 @@ mod tests {
             Felt::try_new(test_block_hash_parent).unwrap();
         let test_block_hash =
             "0x5e1f17aa69fc4aed2ab97c01551c9dca44569aa1e890a2c9c57593e062ef6d4";
-        let test_block_hash_next = "0x321e890a2c9c57593e062ef6d4";
+        let test_block_hash_next =
+            "0x4241bf8b7887ec886bd6b2422e601bbf51c294503a817490fa6dde99c5fef45";
         let test_block_hash_next_felt =
             Felt::try_new(test_block_hash_next).unwrap();
         let test_block_hash_felt = Felt::try_new(test_block_hash).unwrap();

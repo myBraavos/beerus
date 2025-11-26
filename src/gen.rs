@@ -64,6 +64,28 @@ pub mod gen {
         pub sequencer_address: Felt,
         pub starknet_version: String,
         pub timestamp: BlockHeaderTimestamp,
+
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
+        pub event_commitment: Option<Felt>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
+        pub transaction_commitment: Option<Felt>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
+        pub receipt_commitment: Option<Felt>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
+        pub state_diff_commitment: Option<Felt>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
+        pub event_count: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
+        pub transaction_count: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
+        pub state_diff_length: Option<u64>,
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -223,6 +245,21 @@ pub mod gen {
         pub block_header: BlockHeader,
         #[serde(flatten)]
         pub block_body_with_tx_hashes: BlockBodyWithTxHashes,
+    }
+
+    impl TryFrom<GetBlockWithTxHashesResult> for BlockWithTxHashes {
+        type Error = eyre::Error;
+        fn try_from(
+            value: GetBlockWithTxHashesResult,
+        ) -> Result<Self, Self::Error> {
+            let GetBlockWithTxHashesResult::BlockWithTxHashes(block) = value
+            else {
+                eyre::bail!(
+                    "Pending state update received, which is not supported"
+                );
+            };
+            Ok(block)
+        }
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]

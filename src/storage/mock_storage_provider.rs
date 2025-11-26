@@ -99,22 +99,6 @@ impl MockStorageProvider {
         }
         self
     }
-
-    pub fn with_states_by_range(
-        self,
-        start_block: i64,
-        end_block: i64,
-        states: Vec<State>,
-    ) -> Self {
-        {
-            let mut by_range = self
-                .states_by_range
-                .try_lock()
-                .expect("Should be able to lock");
-            by_range.insert((start_block, end_block), states);
-        }
-        self
-    }
 }
 
 impl Default for MockStorageProvider {
