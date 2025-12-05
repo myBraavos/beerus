@@ -36,7 +36,7 @@ pub use state::State;
 pub use utils::as_felt;
 
 const MIN_RPC_SPEC_VERSION: &str = "0.8.1";
-const COMMITMENTS_RPC_SPEC_VERSION: &str = "0.10.2";
+const COMMITMENTS_RPC_SPEC_VERSION: &str = "0.10.0";
 pub const FIRST_SUPPORTED_BLOCK_NUMBER: i64 = 1_000_000;
 
 type L1LockMap = Arc<RwLock<HashMap<(i64, i64), Arc<Mutex<()>>>>>;
