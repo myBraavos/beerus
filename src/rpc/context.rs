@@ -152,7 +152,7 @@ impl<S: StorageProviderTrait> gen::Rpc for Context<S> {
             self.client.http().clone(),
         );
         let call_info =
-            exe::call(client, request, state, self.client.rate_limiter())
+            exe::call(client, request, state, self.client.rate_limiter(), self.client.settings())
                 .map_err(|e| jsonrpc::Error::new(-32602, e.to_string()))?;
 
         Ok(call_info

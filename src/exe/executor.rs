@@ -23,9 +23,10 @@ use starknet_api::{
     transaction::fields::Calldata,
 };
 use starknet_types_core::felt::Felt as StarkFelt;
+use std::sync::RwLock;
 
 use crate::{
-    client::{rate_limiter::RateLimiter, State},
+    client::{State, rate_limiter::RateLimiter, settings::Settings},
     exe::{cache, contract_loader::ContractLoader, err::Error},
     gen::{self, blocking::Rpc},
 };
@@ -48,11 +49,26 @@ fn wait_rate_limiter(rate_limiter: &RateLimiter) {
     }
 }
 
+fn should_verify_storage_sync(settings: &Arc<RwLock<Settings>>, contract_address: &str) -> bool {
+    // Use blocking read lock - this works in both sync and async contexts
+    // Settings reads are fast, so blocking is acceptable
+    match settings.read() {
+        Ok(guard) => guard.should_verify_storage(&contract_address.to_string()),
+        Err(_) => {
+            // Lock is poisoned (another thread panicked while holding the lock)
+            // Return a safe default: verify storage if we can't read settings
+            tracing::warn!("Settings lock is poisoned");
+            true
+        }
+    }
+}
+
 /// Executes function calls on the Starknet state
 pub struct CallExecutor<T: gen::client::blocking::HttpClient> {
     client: gen::client::blocking::Client<T>,
     state: State,
     rate_limiter: RateLimiter,
+    settings: Arc<RwLock<Settings>>,
 }
 
 impl<T: gen::client::blocking::HttpClient + Clone> CallExecutor<T> {
@@ -61,8 +77,9 @@ impl<T: gen::client::blocking::HttpClient + Clone> CallExecutor<T> {
         client: gen::client::blocking::Client<T>,
         state: State,
         rate_limiter: RateLimiter,
+        settings: Arc<RwLock<Settings>>,
     ) -> Self {
-        Self { client, state, rate_limiter }
+        Self { client, state, rate_limiter, settings }
     }
 
     /// Execute a function call
@@ -113,6 +130,7 @@ impl<T: gen::client::blocking::HttpClient + Clone> CallExecutor<T> {
             client: self.client.clone(),
             state: self.state.clone(),
             rate_limiter: self.rate_limiter.clone(),
+            settings: self.settings.clone(),
         };
 
         tracing::debug!("State information:");
@@ -139,6 +157,7 @@ struct StateProxy<T: gen::client::blocking::HttpClient> {
     client: gen::client::blocking::Client<T>,
     state: State,
     rate_limiter: RateLimiter,
+    settings: Arc<RwLock<Settings>>,
 }
 
 impl<T: gen::client::blocking::HttpClient> cache::HasBlockHash
@@ -179,22 +198,26 @@ impl<T: gen::client::blocking::HttpClient> StateReader for StateProxy<T> {
             return Ok(StarkFelt::try_from(ret)?);
         }
 
-        wait_rate_limiter(&self.rate_limiter);
-        let proof = self
-            .client
-            .getProof(block_id, address.clone(), vec![key.clone()])
-            .map_err(Into::<Error>::into)?;
-        tracing::debug!("get_storage_at: proof received");
+        if should_verify_storage_sync(&self.settings, &address.0.to_string()) {
+            wait_rate_limiter(&self.rate_limiter);
+            let proof = self
+                .client
+                .getProof(block_id, address.clone(), vec![key.clone()])
+                .map_err(Into::<Error>::into)?;
+            tracing::debug!("get_storage_at: proof received");
 
-        let global_root = self.state.root.clone();
-        let value = ret.clone();
-        crate::proof::verify_proof(&proof, global_root, address, key, value)
-            .map_err(|e| {
-                blockifier::state::errors::StateError::StateReadError(format!(
-                    "Failed to verify merkle proof: {e:?}"
-                ))
-            })?;
-        tracing::debug!("get_storage_at: proof verified");
+            let global_root = self.state.root.clone();
+            let value = ret.clone();
+            crate::proof::verify_proof(&proof, global_root, address, key, value)
+                .map_err(|e| {
+                    blockifier::state::errors::StateError::StateReadError(format!(
+                        "Failed to verify merkle proof: {e:?}"
+                    ))
+                })?;
+            tracing::debug!("get_storage_at: proof verified");
+        } else {
+            tracing::debug!("skipping storage verification for contract {}", &address.0.to_string());
+        }
 
         Ok(StarkFelt::try_from(ret)?)
     }

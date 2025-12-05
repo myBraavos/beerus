@@ -97,6 +97,7 @@ pub async fn serve_on<S: StorageProviderTrait>(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let app = server.router();
     let listener = tokio::net::TcpListener::bind(addr).await?;
+    tracing::info!("rpc server started on {}", addr);
     axum::serve(listener, app).await?;
     Ok(())
 }

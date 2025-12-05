@@ -2,7 +2,7 @@ use eyre::Result;
 use futures::stream::{StreamExt, TryStreamExt};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{Mutex, RwLock as TokioRwLock};
 
 use crate::background_loader::async_blocker::AsyncBlocker;
 use crate::client::block_hash::{
@@ -12,6 +12,7 @@ use crate::client::l1_range::L1Range;
 use crate::client::rate_limiter::RateLimiter;
 use crate::client::state::{GatewayState, L1State};
 use crate::client::utils::{approximate_l1_block, find_l1_sub_range};
+use crate::client::settings::Settings;
 use crate::config::Config;
 use crate::eth::core_contract::L1CoreContract;
 use crate::feeder::GatewayClient;
@@ -30,6 +31,7 @@ pub mod l1_range;
 pub mod rate_limiter;
 pub mod state;
 pub mod utils;
+pub mod settings;
 
 pub use http::Http;
 pub use state::State;
@@ -39,7 +41,7 @@ const MIN_RPC_SPEC_VERSION: &str = "0.8.1";
 const COMMITMENTS_RPC_SPEC_VERSION: &str = "0.10.0";
 pub const FIRST_SUPPORTED_BLOCK_NUMBER: i64 = 1_000_000;
 
-type L1LockMap = Arc<RwLock<HashMap<(i64, i64), Arc<Mutex<()>>>>>;
+type L1LockMap = Arc<TokioRwLock<HashMap<(i64, i64), Arc<Mutex<()>>>>>;
 
 /// Main client for syncing and verifying Starknet state
 #[derive(Clone)]
@@ -59,6 +61,7 @@ pub struct Client<
     rate_limiter: RateLimiter,
     l1_locks: L1LockMap,
     spec_version: semver::Version,
+    settings: Arc<std::sync::RwLock<Settings>>,
 }
 
 impl<
@@ -85,7 +88,8 @@ impl<
         let gateway = Arc::new(GatewayClient::new(&config.gateway_url)?);
         let l1_core_contract = Arc::new(L1CoreContract::new(&config.eth_rpc));
         let rate_limiter = RateLimiter::new(config.l2_rate_limit);
-        let l1_locks = Arc::new(RwLock::new(HashMap::new()));
+        let l1_locks = Arc::new(TokioRwLock::new(HashMap::new()));
+        let settings = Arc::new(std::sync::RwLock::new(Settings::new()));
         Ok(Self {
             starknet,
             http,
@@ -96,6 +100,7 @@ impl<
             rate_limiter,
             l1_locks,
             spec_version,
+            settings,
         })
     }
 
@@ -130,6 +135,11 @@ impl<
         &self.config
     }
 
+    /// Get the settings
+    pub fn settings(&self) -> Arc<std::sync::RwLock<Settings>> {
+        self.settings.clone()
+    }
+
     /// Get the spec version
     pub fn spec_version(&self) -> &semver::Version {
         &self.spec_version
@@ -146,7 +156,7 @@ impl<
             self.http.clone(),
         );
         let call_info =
-            crate::exe::call(client, request, state, self.rate_limiter())?;
+            crate::exe::call(client, request, state, self.rate_limiter(), self.settings())?;
         let result = call_info
             .execution
             .retdata
@@ -890,6 +900,7 @@ mod tests {
             database_url: "".to_string(),
             l2_rate_limit: 10,
             l1_range_blocks: 9,
+            disable_background_loader: false,
         }
     }
 

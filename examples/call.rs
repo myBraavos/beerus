@@ -20,6 +20,7 @@ async fn main() -> Result<()> {
         ),
         l2_rate_limit: 10,
         l1_range_blocks: 9,
+        disable_background_loader: true,
     };
 
     let http = Http::new();

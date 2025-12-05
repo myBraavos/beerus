@@ -28,6 +28,7 @@ mod env_vars {
     pub const STARKNET_RPC: &str = "STARKNET_RPC";
     pub const GATEWAY_URL: &str = "GATEWAY_URL";
     pub const DATABASE_URL: &str = "DATABASE_URL";
+    pub const DISABLE_BACKGROUND_LOADER: &str = "DISABLE_BACKGROUND_LOADER";
     pub const POLL_SECS: &str = "POLL_SECS";
     pub const L1_POLL_SECS: &str = "L1_POLL_SECS";
     pub const RPC_ADDR: &str = "RPC_ADDR";
@@ -80,6 +81,8 @@ pub struct Config {
     #[cfg(not(target_arch = "wasm32"))]
     #[validate(url)]
     pub database_url: String,
+    #[serde(default = "default_disable_background_loader")]
+    pub disable_background_loader: bool,
 }
 
 impl ServerConfig {
@@ -98,6 +101,7 @@ impl ServerConfig {
                 l1_range_blocks: Self::parse_l1_range_blocks_from_env()?,
                 #[cfg(not(target_arch = "wasm32"))]
                 database_url: Self::parse_database_url_from_env()?,
+                disable_background_loader: Self::parse_disable_background_loader_from_env()?,
             },
             poll_secs,
             l1_poll_secs,
@@ -187,6 +191,14 @@ impl ServerConfig {
         std::env::var(env_vars::DATABASE_URL)
             .context("DATABASE_URL environment variable is required")
     }
+
+    /// Parse disable background loader from environment variable
+    fn parse_disable_background_loader_from_env() -> Result<bool> {
+        match std::env::var(env_vars::DISABLE_BACKGROUND_LOADER) {
+            Ok(value) => Ok(value.to_lowercase() == "true" || value == "1"),
+            Err(_) => Ok(default_disable_background_loader()),
+        }
+    }
 }
 
 /// Default poll interval in seconds
@@ -207,6 +219,11 @@ fn default_batch_size() -> u32 {
 /// Default L1 range blocks
 fn default_l1_range_blocks() -> u64 {
     constants::DEFAULT_L1_RANGE_BLOCKS
+}
+
+/// Default disable background loader
+fn default_disable_background_loader() -> bool {
+    false
 }
 
 /// Default RPC server address
@@ -249,6 +266,7 @@ mod tests {
                 l1_range_blocks: 9,
                 #[cfg(not(target_arch = "wasm32"))]
                 database_url: "".to_string(),
+                disable_background_loader: false,
             },
             poll_secs: 300,
             l1_poll_secs: 600,
@@ -271,6 +289,7 @@ mod tests {
                 l1_range_blocks: 9,
                 #[cfg(not(target_arch = "wasm32"))]
                 database_url: "".to_string(),
+                disable_background_loader: false,
             },
             poll_secs: 9999, // Too high
             l1_poll_secs: 600,
@@ -293,6 +312,7 @@ mod tests {
                 l1_range_blocks: 9,
                 #[cfg(not(target_arch = "wasm32"))]
                 database_url: "".to_string(),
+                disable_background_loader: false,
             },
             poll_secs: 300,
             l1_poll_secs: 600,

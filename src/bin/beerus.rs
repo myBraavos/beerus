@@ -73,12 +73,13 @@ async fn main() -> eyre::Result<()> {
         });
     }
 
-    tokio::spawn(async move {
-        background_loader.run().await;
-    });
+    if !config.client.disable_background_loader {
+        tokio::spawn(async move {
+            background_loader.run().await;
+        });
+    }
 
     beerus::rpc::serve_on(server, &config.rpc_addr.to_string()).await.unwrap();
-    tracing::info!("rpc server started");
     Ok(())
 }
 

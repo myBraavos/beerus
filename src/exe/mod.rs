@@ -12,10 +12,12 @@
 //! - **ExecutionContextBuilder**: Creates execution contexts for function calls
 //! - **Type Mappings**: Conversion utilities between generated and Cairo types
 
+use std::sync::{Arc, RwLock};
+
 use blockifier::execution::call_info::CallInfo;
 
 use crate::{
-    client::{rate_limiter::RateLimiter, State},
+    client::{State, rate_limiter::RateLimiter, settings::Settings},
     gen,
 };
 
@@ -25,7 +27,6 @@ pub mod contract_loader;
 pub mod err;
 pub mod executor;
 pub mod map;
-pub mod state_proxy;
 
 use err::Error;
 
@@ -56,7 +57,8 @@ pub fn call<T: gen::client::blocking::HttpClient + Clone>(
     function_call: gen::FunctionCall,
     state: State,
     rate_limiter: RateLimiter,
+    settings: Arc<RwLock<Settings>>,
 ) -> Result<CallInfo, Error> {
-    let executor = executor::CallExecutor::new(client, state, rate_limiter);
+    let executor = executor::CallExecutor::new(client, state, rate_limiter, settings);
     executor.execute(function_call)
 }

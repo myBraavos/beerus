@@ -3,14 +3,17 @@ use serde::{Deserialize, Serialize};
 use axum::{extract::State, http::StatusCode, Json};
 
 use crate::{
-    rpc::context::Context, storage::storage_trait::StorageProviderTrait,
+    client::settings::SettingObject, rpc::context::Context, storage::storage_trait::StorageProviderTrait
 };
+
+
 
 #[derive(Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum Request {
     Single(iamgroot::jsonrpc::Request),
     Batch(Vec<iamgroot::jsonrpc::Request>),
+    Settings(Vec<SettingObject>),
 }
 
 #[derive(Default, Deserialize, Serialize)]
@@ -46,6 +49,13 @@ pub async fn handle_request<S: StorageProviderTrait>(
                 }
             }
             Ok(Json(Response::Batch(ret)))
+        }
+        Request::Settings(req) => {
+            let settings = ctx.client.settings();
+            if let Ok(mut guard) = settings.write() {
+                guard.update_settings(req);
+            }
+            Ok(Json(Response::Empty))
         }
     };
 

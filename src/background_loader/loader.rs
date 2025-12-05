@@ -207,6 +207,7 @@ mod tests {
             database_url: "".to_string(),
             l2_rate_limit: 10,
             l1_range_blocks: 9,
+            disable_background_loader: false,
         }
     }
 
