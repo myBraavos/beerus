@@ -151,9 +151,14 @@ impl<S: StorageProviderTrait> gen::Rpc for Context<S> {
             &self.client.starknet().await.url,
             self.client.http().clone(),
         );
-        let call_info =
-            exe::call(client, request, state, self.client.rate_limiter(), self.client.settings())
-                .map_err(|e| jsonrpc::Error::new(-32602, e.to_string()))?;
+        let call_info = exe::call(
+            client,
+            request,
+            state,
+            self.client.rate_limiter(),
+            self.client.settings(),
+        )
+        .map_err(|e| jsonrpc::Error::new(-32602, e.to_string()))?;
 
         Ok(call_info
             .execution
@@ -335,11 +340,29 @@ impl<S: StorageProviderTrait> gen::Rpc for Context<S> {
         transactions: Vec<BroadcastedTxn>,
         simulation_flags: Vec<SimulationFlag>,
     ) -> Result<Vec<SimulatedTransaction>, jsonrpc::Error> {
-        self.client
-            .starknet()
+        // Call requests are heavy, block all background tasks
+        let _guard = self.async_blocker.block_tasks();
+        tracing::info!("Received simulate request on block {:?}", block_id);
+
+        let state = self
+            .client
+            .get_state_at(block_id)
             .await
-            .simulateTransactions(block_id, transactions, simulation_flags)
-            .await
+            .map_err(|e| jsonrpc::Error::new(-32602, e.to_string()))?;
+        let client = gen::client::blocking::Client::new(
+            &self.client.starknet().await.url,
+            self.client.http().clone(),
+        );
+        exe::simulate(
+            client,
+            transactions,
+            simulation_flags,
+            state,
+            &self.client.gas_prices(),
+            self.client.rate_limiter(),
+            self.client.settings(),
+        )
+        .map_err(|e| jsonrpc::Error::new(-32602, e.to_string()))
     }
 
     async fn specVersion(&self) -> Result<String, jsonrpc::Error> {

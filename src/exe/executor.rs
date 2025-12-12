@@ -13,6 +13,7 @@ use blockifier::{
     state::state_api::{State as BlockifierState, StateReader, StateResult},
 };
 use starknet_api::{
+    block::{BlockNumber, BlockTimestamp, GasPrices},
     contract_class::EntryPointType,
     core::{
         ClassHash, CompiledClassHash, ContractAddress, EntryPointSelector,
@@ -26,8 +27,11 @@ use starknet_types_core::felt::Felt as StarkFelt;
 use std::sync::RwLock;
 
 use crate::{
-    client::{State, rate_limiter::RateLimiter, settings::Settings},
-    exe::{cache, contract_loader::ContractLoader, err::Error},
+    client::{rate_limiter::RateLimiter, settings::Settings, State},
+    exe::{
+        cache, contract_loader::ContractLoader, err::Error,
+        simulate::simulate_transactions, utils::transform_trace_json,
+    },
     gen::{self, blocking::Rpc},
 };
 
@@ -49,7 +53,10 @@ fn wait_rate_limiter(rate_limiter: &RateLimiter) {
     }
 }
 
-fn should_verify_storage_sync(settings: &Arc<RwLock<Settings>>, contract_address: &str) -> bool {
+fn should_verify_storage_sync(
+    settings: &Arc<RwLock<Settings>>,
+    contract_address: &str,
+) -> bool {
     // Use blocking read lock - this works in both sync and async contexts
     // Settings reads are fast, so blocking is acceptable
     match settings.read() {
@@ -83,7 +90,7 @@ impl<T: gen::client::blocking::HttpClient + Clone> CallExecutor<T> {
     }
 
     /// Execute a function call
-    pub fn execute(
+    pub fn call(
         &self,
         function_call: gen::FunctionCall,
     ) -> Result<CallInfo, Error> {
@@ -150,6 +157,105 @@ impl<T: gen::client::blocking::HttpClient + Clone> CallExecutor<T> {
         tracing::debug!(?call_info, "call completed");
         Ok(call_info)
     }
+
+    pub fn simulate(
+        &self,
+        transactions: Vec<gen::BroadcastedTxn>,
+        simulation_flags: Vec<gen::SimulationFlag>,
+        gas_prices: &GasPrices,
+    ) -> Result<Vec<gen::SimulatedTransaction>, Error> {
+        let mut charge_fee = true;
+        let mut validate = true;
+        for flag in simulation_flags {
+            match flag {
+                gen::SimulationFlag::SkipFeeCharge => charge_fee = false,
+                gen::SimulationFlag::SkipValidate => validate = false,
+            }
+        }
+
+        let state_proxy: StateProxy<T> = StateProxy {
+            client: self.client.clone(),
+            state: self.state.clone(),
+            rate_limiter: self.rate_limiter.clone(),
+            settings: self.settings.clone(),
+        };
+        let state_proxy = cache::CachedState::new(state_proxy);
+
+        // Convert BroadcastedTxn to ExecutableTransactionInput
+        let executable_transactions: Vec<
+            apollo_rpc_execution::ExecutableTransactionInput,
+        > = transactions
+            .into_iter()
+            .map(|tx| tx.try_into())
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let res = simulate_transactions(
+            executable_transactions,
+            &starknet_api::core::ChainId::Mainnet,
+            state_proxy,
+            gas_prices,
+            BlockNumber(self.state.block_number as u64),
+            BlockTimestamp::from(self.state.timestamp as u64),
+            charge_fee,
+            validate,
+        )
+        .map_err(Error::from)?;
+
+        tracing::debug!("Simulation result: {:?}", res);
+
+        // Convert TransactionSimulationOutput to gen::SimulatedTransaction
+        // Use serde_json to convert, handling the enum structure properly
+        let converted: Vec<gen::SimulatedTransaction> = res
+            .into_iter()
+            .map(|output| {
+                // Convert transaction_trace by serializing and transforming the structure
+                let trace_json = serde_json::to_value(&output.transaction_trace)
+                    .map_err(|e| Error::IamGroot(iamgroot::jsonrpc::Error::new(
+                        32101,
+                        format!("Failed to serialize transaction trace: {e:?}"),
+                    )))?;
+
+                tracing::debug!("Original trace JSON: {}", serde_json::to_string(&trace_json).unwrap_or_default());
+
+                let state_diff_json = serde_json::to_value(&output.induced_state_diff)
+                    .map_err(|e| Error::IamGroot(iamgroot::jsonrpc::Error::new(
+                        32101,
+                        format!("Failed to serialize transaction trace: {e:?}"),
+                    )))?;
+
+                // Transform the JSON to match gen's expected structure
+                // The apollo structure has execution_resources with a different format
+                let transformed_json = transform_trace_json(trace_json, state_diff_json)?;
+
+                tracing::debug!("Transformed trace JSON: {}", serde_json::to_string(&transformed_json).unwrap_or_default());
+
+                let transaction_trace: gen::TransactionTrace = serde_json::from_value(transformed_json.clone())
+                    .map_err(|e| {
+                        tracing::error!("Failed to deserialize trace JSON: {e:?}");
+                        tracing::error!("JSON was: {}", serde_json::to_string(&transformed_json).unwrap_or_default());
+                        Error::IamGroot(iamgroot::jsonrpc::Error::new(
+                            32101,
+                            format!("Failed to convert transaction trace: {e:?}"),
+                        ))
+                    })?;
+
+                // Convert fee_estimation using serde_json
+                let fee_estimation = serde_json::to_value(&output.fee_estimation)
+                    .and_then(serde_json::from_value)
+                    .map_err(|e| Error::IamGroot(iamgroot::jsonrpc::Error::new(
+                        32101,
+                        format!("Failed to convert fee estimation: {e:?}"),
+                    )))?;
+
+                Ok(gen::SimulatedTransaction {
+                    fee_estimation: Some(fee_estimation),
+                    transaction_trace: Some(transaction_trace),
+                })
+            })
+            .collect::<Result<Vec<_>, Error>>()?;
+
+        Ok(converted)
+    }
 }
 
 /// State proxy that implements the blockifier state interface
@@ -208,15 +314,24 @@ impl<T: gen::client::blocking::HttpClient> StateReader for StateProxy<T> {
 
             let global_root = self.state.root.clone();
             let value = ret.clone();
-            crate::proof::verify_proof(&proof, global_root, address, key, value)
-                .map_err(|e| {
-                    blockifier::state::errors::StateError::StateReadError(format!(
-                        "Failed to verify merkle proof: {e:?}"
-                    ))
-                })?;
+            crate::proof::verify_proof(
+                &proof,
+                global_root,
+                address,
+                key,
+                value,
+            )
+            .map_err(|e| {
+                blockifier::state::errors::StateError::StateReadError(format!(
+                    "Failed to verify merkle proof: {e:?}"
+                ))
+            })?;
             tracing::debug!("get_storage_at: proof verified");
         } else {
-            tracing::debug!("skipping storage verification for contract {}", &address.0.to_string());
+            tracing::debug!(
+                "skipping storage verification for contract {}",
+                &address.0.to_string()
+            );
         }
 
         Ok(StarkFelt::try_from(ret)?)

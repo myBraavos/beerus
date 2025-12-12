@@ -1,5 +1,6 @@
 use eyre::Result;
 use futures::stream::{StreamExt, TryStreamExt};
+use starknet_api::block::{GasPriceVector, GasPrices};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock as TokioRwLock};
@@ -10,9 +11,9 @@ use crate::client::block_hash::{
 };
 use crate::client::l1_range::L1Range;
 use crate::client::rate_limiter::RateLimiter;
+use crate::client::settings::Settings;
 use crate::client::state::{GatewayState, L1State};
 use crate::client::utils::{approximate_l1_block, find_l1_sub_range};
-use crate::client::settings::Settings;
 use crate::config::Config;
 use crate::eth::core_contract::L1CoreContract;
 use crate::feeder::GatewayClient;
@@ -29,9 +30,9 @@ pub mod block_hash;
 pub mod http;
 pub mod l1_range;
 pub mod rate_limiter;
+pub mod settings;
 pub mod state;
 pub mod utils;
-pub mod settings;
 
 pub use http::Http;
 pub use state::State;
@@ -62,6 +63,7 @@ pub struct Client<
     l1_locks: L1LockMap,
     spec_version: semver::Version,
     settings: Arc<std::sync::RwLock<Settings>>,
+    gas_prices: Arc<std::sync::RwLock<GasPrices>>,
 }
 
 impl<
@@ -90,6 +92,7 @@ impl<
         let rate_limiter = RateLimiter::new(config.l2_rate_limit);
         let l1_locks = Arc::new(TokioRwLock::new(HashMap::new()));
         let settings = Arc::new(std::sync::RwLock::new(Settings::new()));
+        let gas_prices = Arc::new(std::sync::RwLock::new(GasPrices::default()));
         Ok(Self {
             starknet,
             http,
@@ -101,6 +104,7 @@ impl<
             l1_locks,
             spec_version,
             settings,
+            gas_prices,
         })
     }
 
@@ -145,6 +149,15 @@ impl<
         &self.spec_version
     }
 
+    /// Get the gas prices
+    pub fn gas_prices(&self) -> GasPrices {
+        if let Ok(guard) = self.gas_prices.read() {
+            guard.clone()
+        } else {
+            GasPrices::default()
+        }
+    }
+
     /// Execute a function call on the Starknet state
     pub fn execute(
         &self,
@@ -155,8 +168,13 @@ impl<
             &self.starknet.url,
             self.http.clone(),
         );
-        let call_info =
-            crate::exe::call(client, request, state, self.rate_limiter(), self.settings())?;
+        let call_info = crate::exe::call(
+            client,
+            request,
+            state,
+            self.rate_limiter(),
+            self.settings(),
+        )?;
         let result = call_info
             .execution
             .retdata
@@ -243,9 +261,11 @@ impl<
             if parent_block_hash != prev_block_hash {
                 eyre::bail!("Prev block hash mismatch: expected {prev_block_hash:?} but got {parent_block_hash:?}");
             }
+            // prev_block_hash is provided when verifying the tip, so update gas in this case
+            self.update_gas_prices(block_header).await;
         }
 
-        // Step 4: Construct local minimal state and persist it.
+        // Step 3: Construct local minimal state and persist it.
         let state = State::new(
             *block_header.block_number.as_ref(),
             *block_header.timestamp.as_ref(),
@@ -254,6 +274,39 @@ impl<
         );
         self.storage().write_state(&state).await?;
         Ok(state)
+    }
+
+    pub async fn update_gas_prices(&self, block_header: &BlockHeader) {
+        let l1_data_gas_price =
+            block_header.l1_data_gas_price.clone().unwrap_or_default();
+        if let Ok(mut guard) = self.gas_prices.write() {
+            guard.eth_gas_prices = GasPriceVector {
+                l1_gas_price: block_header
+                    .l1_gas_price
+                    .price_in_wei
+                    .clone()
+                    .into(),
+                l1_data_gas_price: l1_data_gas_price.price_in_wei.into(),
+                l2_gas_price: block_header
+                    .l2_gas_price
+                    .price_in_wei
+                    .clone()
+                    .into(),
+            };
+            guard.strk_gas_prices = GasPriceVector {
+                l1_gas_price: block_header
+                    .l1_gas_price
+                    .price_in_fri
+                    .clone()
+                    .into(),
+                l1_data_gas_price: l1_data_gas_price.price_in_fri.into(),
+                l2_gas_price: block_header
+                    .l2_gas_price
+                    .price_in_fri
+                    .clone()
+                    .into(),
+            };
+        }
     }
 
     /// Verifies and persists a range of Starknet state blocks by:

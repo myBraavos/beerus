@@ -1,3 +1,4 @@
+use apollo_rpc_execution::ExecutableTransactionInput;
 pub use gen::*;
 use starknet_api::{block::GasPrice, execution_resources::GasAmount};
 
@@ -1129,8 +1130,8 @@ pub mod gen {
                 }
             }
 
-            pub fn zero() -> &'static Self {
-                &ZERO
+            pub fn zero() -> Self {
+                ZERO.clone()
             }
         }
 
@@ -1635,6 +1636,12 @@ pub mod gen {
     pub struct ResourcePrice {
         pub price_in_fri: Felt,
         pub price_in_wei: Felt,
+    }
+
+    impl Default for ResourcePrice {
+        fn default() -> Self {
+            Self { price_in_fri: Felt::zero(), price_in_wei: Felt::zero() }
+        }
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -9180,10 +9187,7 @@ impl TryFrom<StateDiff> for starknet_api::state::ThinStateDiff {
                             ),
                         )?,
                         Nonce(StarkHash::from_hex_unchecked(
-                            nonce
-                                .nonce
-                                .unwrap_or(Felt::zero().clone())
-                                .as_ref(),
+                            nonce.nonce.unwrap_or(Felt::zero()).as_ref(),
                         )),
                     ))
                 })
@@ -9488,5 +9492,655 @@ impl TryFrom<TransactionAndReceipt>
                 common_receipt_properties.transaction_hash.0.as_ref(),
             )),
         })
+    }
+}
+
+impl From<Felt> for starknet_api::block::NonzeroGasPrice {
+    fn from(gas_price: Felt) -> Self {
+        starknet_api::block::NonzeroGasPrice::new(
+            gas_price.try_into().unwrap_or_default(),
+        )
+        .unwrap_or(starknet_api::block::NonzeroGasPrice::MIN)
+    }
+}
+
+// Helper function to convert Felt to u128
+fn felt_to_u128(felt: Felt) -> Result<u128, crate::exe::err::Error> {
+    let trimmed = felt.as_ref().trim_start_matches("0x");
+    Ok(u128::from_str_radix(trimmed, 16)?)
+}
+
+// Helper function to convert U64 to u64
+fn u64_to_u64(val: U64) -> Result<u64, crate::exe::err::Error> {
+    let trimmed = val.as_ref().trim_start_matches("0x");
+    Ok(u64::from_str_radix(trimmed, 16)?)
+}
+
+// Helper function to convert U128 to u128
+fn u128_to_u128(val: U128) -> Result<u128, crate::exe::err::Error> {
+    let trimmed = val.as_ref().trim_start_matches("0x");
+    Ok(u128::from_str_radix(trimmed, 16)?)
+}
+
+impl TryFrom<BroadcastedTxn> for ExecutableTransactionInput {
+    type Error = crate::exe::err::Error;
+    fn try_from(tx: BroadcastedTxn) -> Result<Self, Self::Error> {
+        use crate::exe::map;
+        use starknet_api::{
+            contract_class::SierraVersion,
+            core::{
+                ClassHash, CompiledClassHash, ContractAddress,
+                EntryPointSelector, Nonce,
+            },
+            hash::StarkHash,
+            transaction::{
+                fields::{
+                    AccountDeploymentData, AllResourceBounds, Calldata,
+                    ContractAddressSalt, Fee, PaymasterData, ResourceBounds,
+                    Tip, TransactionSignature, ValidResourceBounds,
+                },
+                DeclareTransactionV0V1, DeclareTransactionV2,
+                DeclareTransactionV3, DeployAccountTransaction,
+                DeployAccountTransactionV1, DeployAccountTransactionV3,
+                InvokeTransaction, InvokeTransactionV0, InvokeTransactionV1,
+                InvokeTransactionV3,
+            },
+        };
+        use starknet_types_core::felt::Felt as StarkFelt;
+        use std::sync::Arc;
+
+        match tx {
+            BroadcastedTxn::BroadcastedInvokeTxn(invoke_txn) => {
+                match invoke_txn.0 {
+                    InvokeTxn::InvokeTxnV0(v0) => {
+                        let max_fee = Fee(felt_to_u128(v0.max_fee)?);
+                        let signature = TransactionSignature(Arc::new(
+                            v0.signature
+                                .into_iter()
+                                .map(StarkFelt::try_from)
+                                .collect::<Result<Vec<_>, _>>()?,
+                        ));
+                        let contract_address = ContractAddress::try_from(
+                            StarkHash::from_hex_unchecked(
+                                v0.contract_address.0.as_ref(),
+                            ),
+                        )?;
+                        let entry_point_selector =
+                            EntryPointSelector(StarkHash::from_hex_unchecked(
+                                v0.entry_point_selector.as_ref(),
+                            ));
+                        let calldata = Calldata(Arc::new(
+                            v0.calldata
+                                .into_iter()
+                                .map(StarkFelt::try_from)
+                                .collect::<Result<Vec<_>, _>>()?,
+                        ));
+
+                        let tx = InvokeTransactionV0 {
+                            max_fee,
+                            signature,
+                            contract_address,
+                            entry_point_selector,
+                            calldata,
+                        };
+
+                        Ok(ExecutableTransactionInput::Invoke(
+                            InvokeTransaction::V0(tx),
+                            false,
+                        ))
+                    }
+                    InvokeTxn::InvokeTxnV1(v1) => {
+                        let max_fee = Fee(felt_to_u128(v1.max_fee)?);
+                        let signature = TransactionSignature(Arc::new(
+                            v1.signature
+                                .into_iter()
+                                .map(StarkFelt::try_from)
+                                .collect::<Result<Vec<_>, _>>()?,
+                        ));
+                        let nonce = Nonce(StarkFelt::try_from(v1.nonce)?);
+                        let sender_address = ContractAddress::try_from(
+                            StarkHash::from_hex_unchecked(
+                                v1.sender_address.0.as_ref(),
+                            ),
+                        )?;
+                        let calldata = Calldata(Arc::new(
+                            v1.calldata
+                                .into_iter()
+                                .map(StarkFelt::try_from)
+                                .collect::<Result<Vec<_>, _>>()?,
+                        ));
+
+                        let tx = InvokeTransactionV1 {
+                            max_fee,
+                            signature,
+                            nonce,
+                            sender_address,
+                            calldata,
+                        };
+
+                        Ok(ExecutableTransactionInput::Invoke(
+                            InvokeTransaction::V1(tx),
+                            false,
+                        ))
+                    }
+                    InvokeTxn::InvokeTxnV3(v3) => {
+                        let signature = TransactionSignature(Arc::new(
+                            v3.signature
+                                .into_iter()
+                                .map(StarkFelt::try_from)
+                                .collect::<Result<Vec<_>, _>>()?,
+                        ));
+                        let nonce = Nonce(StarkFelt::try_from(v3.nonce)?);
+                        let sender_address = ContractAddress::try_from(
+                            StarkHash::from_hex_unchecked(
+                                v3.sender_address.0.as_ref(),
+                            ),
+                        )?;
+                        let calldata = Calldata(Arc::new(
+                            v3.calldata
+                                .into_iter()
+                                .map(StarkFelt::try_from)
+                                .collect::<Result<Vec<_>, _>>()?,
+                        ));
+
+                        // Convert resource bounds
+                        let resource_bounds = ValidResourceBounds::AllResources(
+                            AllResourceBounds {
+                                l1_gas: ResourceBounds {
+                                    max_amount: u64_to_u64(
+                                        v3.resource_bounds.l1_gas.max_amount,
+                                    )?
+                                    .into(),
+                                    max_price_per_unit: u128_to_u128(
+                                        v3.resource_bounds
+                                            .l1_gas
+                                            .max_price_per_unit,
+                                    )?
+                                    .into(),
+                                },
+                                l2_gas: ResourceBounds {
+                                    max_amount: u64_to_u64(
+                                        v3.resource_bounds.l2_gas.max_amount,
+                                    )?
+                                    .into(),
+                                    max_price_per_unit: u128_to_u128(
+                                        v3.resource_bounds
+                                            .l2_gas
+                                            .max_price_per_unit,
+                                    )?
+                                    .into(),
+                                },
+                                l1_data_gas: ResourceBounds {
+                                    max_amount: 0u64.into(),
+                                    max_price_per_unit: 0u128.into(),
+                                },
+                            },
+                        );
+
+                        let tip = Tip(u64_to_u64(v3.tip)?);
+
+                        let paymaster_data = PaymasterData(
+                            v3.paymaster_data
+                                .into_iter()
+                                .map(StarkFelt::try_from)
+                                .collect::<Result<Vec<_>, _>>()?,
+                        );
+
+                        let account_deployment_data = AccountDeploymentData(
+                            v3.account_deployment_data
+                                .into_iter()
+                                .map(StarkFelt::try_from)
+                                .collect::<Result<Vec<_>, _>>()?,
+                        );
+
+                        let tx = InvokeTransactionV3 {
+                            resource_bounds,
+                            tip,
+                            signature,
+                            nonce,
+                            sender_address,
+                            calldata,
+                            nonce_data_availability_mode: match v3.nonce_data_availability_mode {
+                                DaMode::L1 => starknet_api::data_availability::DataAvailabilityMode::L1,
+                                DaMode::L2 => starknet_api::data_availability::DataAvailabilityMode::L2,
+                            },
+                            fee_data_availability_mode: match v3.fee_data_availability_mode {
+                                DaMode::L1 => starknet_api::data_availability::DataAvailabilityMode::L1,
+                                DaMode::L2 => starknet_api::data_availability::DataAvailabilityMode::L2,
+                            },
+                            paymaster_data,
+                            account_deployment_data,
+                        };
+
+                        Ok(ExecutableTransactionInput::Invoke(
+                            InvokeTransaction::V3(tx),
+                            false,
+                        ))
+                    }
+                }
+            }
+            BroadcastedTxn::BroadcastedDeclareTxn(declare_txn) => {
+                match declare_txn {
+                    BroadcastedDeclareTxn::BroadcastedDeclareTxnV1(v1) => {
+                        // Convert to DeclareTransactionV0V1
+                        let class_hash = ClassHash(StarkHash::ZERO); // Will be computed by blockifier
+                        let max_fee = Fee(felt_to_u128(v1.max_fee)?);
+                        let nonce = Nonce(StarkFelt::try_from(v1.nonce)?);
+                        let sender_address = ContractAddress::try_from(
+                            StarkHash::from_hex_unchecked(
+                                v1.sender_address.0.as_ref(),
+                            ),
+                        )?;
+                        let signature = TransactionSignature(Arc::new(
+                            v1.signature
+                                .into_iter()
+                                .map(StarkFelt::try_from)
+                                .collect::<Result<Vec<_>, _>>()?,
+                        ));
+
+                        let tx = DeclareTransactionV0V1 {
+                            max_fee,
+                            signature,
+                            nonce,
+                            class_hash,
+                            sender_address,
+                        };
+
+                        // Convert contract class
+                        let deprecated_class =
+                            map::convert_deprecated_contract_class(
+                                v1.contract_class,
+                            )?;
+
+                        // Calculate ABI length
+                        let abi_length = deprecated_class
+                            .abi
+                            .as_ref()
+                            .map_or(0, |abi| abi.len());
+
+                        Ok(ExecutableTransactionInput::DeclareV1(
+                            tx,
+                            deprecated_class,
+                            abi_length,
+                            false,
+                        ))
+                    }
+                    BroadcastedDeclareTxn::BroadcastedDeclareTxnV2(v2) => {
+                        // Convert to DeclareTransactionV2
+                        let class_hash = ClassHash(StarkHash::ZERO); // Will be computed by blockifier
+                        let compiled_class_hash =
+                            CompiledClassHash(StarkHash::from_hex_unchecked(
+                                v2.compiled_class_hash.as_ref(),
+                            ));
+                        let max_fee = Fee(felt_to_u128(v2.max_fee)?);
+                        let nonce = Nonce(StarkFelt::try_from(v2.nonce)?);
+                        let sender_address = ContractAddress::try_from(
+                            StarkHash::from_hex_unchecked(
+                                v2.sender_address.0.as_ref(),
+                            ),
+                        )?;
+                        let signature = TransactionSignature(Arc::new(
+                            v2.signature
+                                .into_iter()
+                                .map(StarkFelt::try_from)
+                                .collect::<Result<Vec<_>, _>>()?,
+                        ));
+
+                        let tx = DeclareTransactionV2 {
+                            max_fee,
+                            signature,
+                            nonce,
+                            class_hash,
+                            compiled_class_hash,
+                            sender_address,
+                        };
+
+                        // Convert contract class using TryFrom from convert module
+                        use crate::convert::ToCairo;
+                        let cairo_class = v2.contract_class.to_cairo()?;
+
+                        // Compile to CASM
+                        let casm_contract_class = cairo_lang_starknet_classes::casm_contract_class::CasmContractClass::from_contract_class(
+                            cairo_class.clone(),
+                            false,
+                            usize::MAX,
+                        )?;
+
+                        // Calculate sierra program length and ABI length from the cairo class
+                        let sierra_program_length =
+                            cairo_class.sierra_program.len();
+                        let abi_length = match &cairo_class.abi {
+                            Some(abi) => {
+                                // Serialize ABI to JSON and count items
+                                let abi_json = serde_json::to_value(abi)
+                                    .unwrap_or(serde_json::Value::Array(
+                                        vec![],
+                                    ));
+                                match abi_json {
+                                    serde_json::Value::Array(items) => {
+                                        items.len()
+                                    }
+                                    _ => 0,
+                                }
+                            }
+                            None => 0,
+                        };
+
+                        // Parse sierra version from string (format: "0.1.0")
+                        let version_parts: Vec<&str> = cairo_class
+                            .contract_class_version
+                            .split('.')
+                            .collect();
+                        let sierra_version = SierraVersion::new(
+                            version_parts
+                                .first()
+                                .and_then(|v| v.parse().ok())
+                                .unwrap_or(0),
+                            version_parts
+                                .get(1)
+                                .and_then(|v| v.parse().ok())
+                                .unwrap_or(1),
+                            version_parts
+                                .get(2)
+                                .and_then(|v| v.parse().ok())
+                                .unwrap_or(0),
+                        );
+
+                        Ok(ExecutableTransactionInput::DeclareV2(
+                            tx,
+                            casm_contract_class,
+                            sierra_program_length,
+                            abi_length,
+                            false,
+                            sierra_version,
+                        ))
+                    }
+                    BroadcastedDeclareTxn::BroadcastedDeclareTxnV3(v3) => {
+                        // Convert to DeclareTransactionV3
+                        let class_hash = ClassHash(StarkHash::ZERO); // Will be computed by blockifier
+                        let compiled_class_hash =
+                            CompiledClassHash(StarkHash::from_hex_unchecked(
+                                v3.compiled_class_hash.as_ref(),
+                            ));
+                        let nonce = Nonce(StarkFelt::try_from(v3.nonce)?);
+                        let sender_address = ContractAddress::try_from(
+                            StarkHash::from_hex_unchecked(
+                                v3.sender_address.0.as_ref(),
+                            ),
+                        )?;
+                        let signature = TransactionSignature(Arc::new(
+                            v3.signature
+                                .into_iter()
+                                .map(StarkFelt::try_from)
+                                .collect::<Result<Vec<_>, _>>()?,
+                        ));
+
+                        // Convert resource bounds
+                        let resource_bounds = ValidResourceBounds::AllResources(
+                            AllResourceBounds {
+                                l1_gas: ResourceBounds {
+                                    max_amount: u64_to_u64(
+                                        v3.resource_bounds.l1_gas.max_amount,
+                                    )?
+                                    .into(),
+                                    max_price_per_unit: u128_to_u128(
+                                        v3.resource_bounds
+                                            .l1_gas
+                                            .max_price_per_unit,
+                                    )?
+                                    .into(),
+                                },
+                                l2_gas: ResourceBounds {
+                                    max_amount: u64_to_u64(
+                                        v3.resource_bounds.l2_gas.max_amount,
+                                    )?
+                                    .into(),
+                                    max_price_per_unit: u128_to_u128(
+                                        v3.resource_bounds
+                                            .l2_gas
+                                            .max_price_per_unit,
+                                    )?
+                                    .into(),
+                                },
+                                l1_data_gas: ResourceBounds {
+                                    max_amount: 0u64.into(),
+                                    max_price_per_unit: 0u128.into(),
+                                },
+                            },
+                        );
+
+                        let tip = Tip(u64_to_u64(v3.tip)?);
+
+                        let paymaster_data = PaymasterData(
+                            v3.paymaster_data
+                                .into_iter()
+                                .map(StarkFelt::try_from)
+                                .collect::<Result<Vec<_>, _>>()?,
+                        );
+
+                        let account_deployment_data = AccountDeploymentData(
+                            v3.account_deployment_data
+                                .into_iter()
+                                .map(StarkFelt::try_from)
+                                .collect::<Result<Vec<_>, _>>()?,
+                        );
+
+                        let tx = DeclareTransactionV3 {
+                            resource_bounds,
+                            tip,
+                            signature,
+                            nonce,
+                            class_hash,
+                            compiled_class_hash,
+                            sender_address,
+                            nonce_data_availability_mode: match v3.nonce_data_availability_mode {
+                                DaMode::L1 => starknet_api::data_availability::DataAvailabilityMode::L1,
+                                DaMode::L2 => starknet_api::data_availability::DataAvailabilityMode::L2,
+                            },
+                            fee_data_availability_mode: match v3.fee_data_availability_mode {
+                                DaMode::L1 => starknet_api::data_availability::DataAvailabilityMode::L1,
+                                DaMode::L2 => starknet_api::data_availability::DataAvailabilityMode::L2,
+                            },
+                            paymaster_data,
+                            account_deployment_data,
+                        };
+
+                        // Convert contract class using ToCairo from convert module
+                        use crate::convert::ToCairo;
+                        let cairo_class = v3.contract_class.to_cairo()?;
+
+                        // Compile to CASM
+                        let casm_contract_class = cairo_lang_starknet_classes::casm_contract_class::CasmContractClass::from_contract_class(
+                            cairo_class.clone(),
+                            false,
+                            usize::MAX,
+                        )?;
+
+                        // Calculate sierra program length and ABI length from the cairo class
+                        let sierra_program_length =
+                            cairo_class.sierra_program.len();
+                        let abi_length = match &cairo_class.abi {
+                            Some(abi) => {
+                                // Serialize ABI to JSON and count items
+                                let abi_json = serde_json::to_value(abi)
+                                    .unwrap_or(serde_json::Value::Array(
+                                        vec![],
+                                    ));
+                                match abi_json {
+                                    serde_json::Value::Array(items) => {
+                                        items.len()
+                                    }
+                                    _ => 0,
+                                }
+                            }
+                            None => 0,
+                        };
+
+                        // Parse sierra version from string (format: "0.1.0")
+                        let version_parts: Vec<&str> = cairo_class
+                            .contract_class_version
+                            .split('.')
+                            .collect();
+                        let sierra_version = SierraVersion::new(
+                            version_parts
+                                .first()
+                                .and_then(|v| v.parse().ok())
+                                .unwrap_or(0),
+                            version_parts
+                                .get(1)
+                                .and_then(|v| v.parse().ok())
+                                .unwrap_or(1),
+                            version_parts
+                                .get(2)
+                                .and_then(|v| v.parse().ok())
+                                .unwrap_or(0),
+                        );
+
+                        Ok(ExecutableTransactionInput::DeclareV3(
+                            tx,
+                            casm_contract_class,
+                            sierra_program_length,
+                            abi_length,
+                            false,
+                            sierra_version,
+                        ))
+                    }
+                }
+            }
+            BroadcastedTxn::BroadcastedDeployAccountTxn(deploy_account_txn) => {
+                match deploy_account_txn.0 {
+                    DeployAccountTxn::DeployAccountTxnV1(v1) => {
+                        // Convert to DeployAccountTransactionV1
+                        let max_fee = Fee(felt_to_u128(v1.max_fee)?);
+                        let nonce = Nonce(StarkFelt::try_from(v1.nonce)?);
+                        let signature = TransactionSignature(Arc::new(
+                            v1.signature
+                                .into_iter()
+                                .map(StarkFelt::try_from)
+                                .collect::<Result<Vec<_>, _>>()?,
+                        ));
+                        let contract_address_salt =
+                            ContractAddressSalt(StarkHash::from_hex_unchecked(
+                                v1.contract_address_salt.as_ref(),
+                            ));
+                        let class_hash =
+                            ClassHash(StarkHash::from_hex_unchecked(
+                                v1.class_hash.as_ref(),
+                            ));
+                        let constructor_calldata = Calldata(Arc::new(
+                            v1.constructor_calldata
+                                .into_iter()
+                                .map(StarkFelt::try_from)
+                                .collect::<Result<Vec<_>, _>>()?,
+                        ));
+
+                        let tx = DeployAccountTransactionV1 {
+                            max_fee,
+                            signature,
+                            nonce,
+                            class_hash,
+                            contract_address_salt,
+                            constructor_calldata,
+                        };
+
+                        Ok(ExecutableTransactionInput::DeployAccount(
+                            DeployAccountTransaction::V1(tx),
+                            false,
+                        ))
+                    }
+                    DeployAccountTxn::DeployAccountTxnV3(v3) => {
+                        // Convert to DeployAccountTransactionV3
+                        let nonce = Nonce(StarkFelt::try_from(v3.nonce)?);
+                        let signature = TransactionSignature(Arc::new(
+                            v3.signature
+                                .into_iter()
+                                .map(StarkFelt::try_from)
+                                .collect::<Result<Vec<_>, _>>()?,
+                        ));
+                        let contract_address_salt =
+                            ContractAddressSalt(StarkHash::from_hex_unchecked(
+                                v3.contract_address_salt.as_ref(),
+                            ));
+                        let class_hash =
+                            ClassHash(StarkHash::from_hex_unchecked(
+                                v3.class_hash.as_ref(),
+                            ));
+                        let constructor_calldata = Calldata(Arc::new(
+                            v3.constructor_calldata
+                                .into_iter()
+                                .map(StarkFelt::try_from)
+                                .collect::<Result<Vec<_>, _>>()?,
+                        ));
+
+                        // Convert resource bounds
+                        let resource_bounds = ValidResourceBounds::AllResources(
+                            AllResourceBounds {
+                                l1_gas: ResourceBounds {
+                                    max_amount: u64_to_u64(
+                                        v3.resource_bounds.l1_gas.max_amount,
+                                    )?
+                                    .into(),
+                                    max_price_per_unit: u128_to_u128(
+                                        v3.resource_bounds
+                                            .l1_gas
+                                            .max_price_per_unit,
+                                    )?
+                                    .into(),
+                                },
+                                l2_gas: ResourceBounds {
+                                    max_amount: u64_to_u64(
+                                        v3.resource_bounds.l2_gas.max_amount,
+                                    )?
+                                    .into(),
+                                    max_price_per_unit: u128_to_u128(
+                                        v3.resource_bounds
+                                            .l2_gas
+                                            .max_price_per_unit,
+                                    )?
+                                    .into(),
+                                },
+                                l1_data_gas: ResourceBounds {
+                                    max_amount: 0u64.into(),
+                                    max_price_per_unit: 0u128.into(),
+                                },
+                            },
+                        );
+
+                        let tip = Tip(u64_to_u64(v3.tip)?);
+
+                        let paymaster_data = PaymasterData(
+                            v3.paymaster_data
+                                .into_iter()
+                                .map(StarkFelt::try_from)
+                                .collect::<Result<Vec<_>, _>>()?,
+                        );
+
+                        let tx = DeployAccountTransactionV3 {
+                            resource_bounds,
+                            tip,
+                            signature,
+                            nonce,
+                            class_hash,
+                            contract_address_salt,
+                            constructor_calldata,
+                            nonce_data_availability_mode: match v3.nonce_data_availability_mode {
+                                DaMode::L1 => starknet_api::data_availability::DataAvailabilityMode::L1,
+                                DaMode::L2 => starknet_api::data_availability::DataAvailabilityMode::L2,
+                            },
+                            fee_data_availability_mode: match v3.fee_data_availability_mode {
+                                DaMode::L1 => starknet_api::data_availability::DataAvailabilityMode::L1,
+                                DaMode::L2 => starknet_api::data_availability::DataAvailabilityMode::L2,
+                            },
+                            paymaster_data,
+                        };
+
+                        Ok(ExecutableTransactionInput::DeployAccount(
+                            DeployAccountTransaction::V3(tx),
+                            false,
+                        ))
+                    }
+                }
+            }
+        }
     }
 }

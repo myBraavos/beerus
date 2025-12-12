@@ -101,7 +101,8 @@ impl ServerConfig {
                 l1_range_blocks: Self::parse_l1_range_blocks_from_env()?,
                 #[cfg(not(target_arch = "wasm32"))]
                 database_url: Self::parse_database_url_from_env()?,
-                disable_background_loader: Self::parse_disable_background_loader_from_env()?,
+                disable_background_loader:
+                    Self::parse_disable_background_loader_from_env()?,
             },
             poll_secs,
             l1_poll_secs,

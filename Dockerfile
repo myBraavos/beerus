@@ -2,7 +2,8 @@ FROM rust:1.90-slim-bullseye AS builder
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
     libssl-dev \
     pkg-config \
-    libpq-dev
+    libpq-dev \
+    libclang-dev
 WORKDIR /beerus
 
 # Copy dependency files first

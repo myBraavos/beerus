@@ -67,16 +67,16 @@ pub fn validate_block_hash_from_header(
     let transaction_commitment_str = block_header
         .transaction_commitment
         .as_ref()
-        .unwrap_or(zero_felt)
+        .unwrap_or(&zero_felt)
         .as_ref();
     let event_commitment_str =
-        block_header.event_commitment.as_ref().unwrap_or(zero_felt).as_ref();
+        block_header.event_commitment.as_ref().unwrap_or(&zero_felt).as_ref();
     let receipt_commitment_str =
-        block_header.receipt_commitment.as_ref().unwrap_or(zero_felt).as_ref();
+        block_header.receipt_commitment.as_ref().unwrap_or(&zero_felt).as_ref();
     let state_diff_commitment_str = block_header
         .state_diff_commitment
         .as_ref()
-        .unwrap_or(zero_felt)
+        .unwrap_or(&zero_felt)
         .as_ref();
 
     let block_commitments = BlockHeaderCommitments {

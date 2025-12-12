@@ -45,8 +45,8 @@ impl Default for State {
         Self {
             block_number: 0,
             timestamp: 0,
-            block_hash: Felt::zero().clone(),
-            root: Felt::zero().clone(),
+            block_hash: Felt::zero(),
+            root: Felt::zero(),
         }
     }
 }
@@ -57,7 +57,7 @@ impl From<GatewayState> for State {
             block_number: gateway_state.block_number,
             timestamp: 0,
             block_hash: gateway_state.block_hash,
-            root: Felt::zero().clone(),
+            root: Felt::zero(),
         }
     }
 }

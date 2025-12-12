@@ -3,10 +3,9 @@ use serde::{Deserialize, Serialize};
 use axum::{extract::State, http::StatusCode, Json};
 
 use crate::{
-    client::settings::SettingObject, rpc::context::Context, storage::storage_trait::StorageProviderTrait
+    client::settings::SettingObject, rpc::context::Context,
+    storage::storage_trait::StorageProviderTrait,
 };
-
-
 
 #[derive(Deserialize, Serialize)]
 #[serde(untagged)]

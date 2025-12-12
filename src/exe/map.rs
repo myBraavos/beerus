@@ -32,7 +32,7 @@ fn convert_entry_points(
 }
 
 /// Convert deprecated contract class from gen format to starknet_api format
-fn convert_deprecated_contract_class(
+pub fn convert_deprecated_contract_class(
     class: gen::DeprecatedContractClass,
 ) -> Result<DeprecatedContractClass, Error> {
     // Convert the program from base64 string to the expected format

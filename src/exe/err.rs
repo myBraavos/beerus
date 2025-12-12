@@ -3,6 +3,8 @@ use thiserror::Error as ThisError;
 
 #[derive(Debug, ThisError)]
 pub enum Error {
+    #[error("conversion error: {0}")]
+    Conversion(#[from] crate::convert::ConversionError),
     #[error("io error: {0:?}")]
     Io(#[from] std::io::Error),
     #[error("base64 error: {0:?}")]
@@ -23,6 +25,8 @@ pub enum Error {
     Transaction(
         #[from] Box<blockifier::transaction::errors::TransactionExecutionError>,
     ),
+    #[error("simulation error: {0:?}")]
+    Simulation(#[from] apollo_rpc_execution::ExecutionError),
     #[error("sierra compilation error: {0:?}")]
     SierraCompilation(#[from] StarknetSierraCompilationError),
     #[error("program error: {0}")]
