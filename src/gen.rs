@@ -1731,12 +1731,6 @@ pub mod gen {
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
-    pub enum SimulationFlagForEstimateFee {
-        #[serde(rename = "SKIP_VALIDATE")]
-        SkipValidate,
-    }
-
-    #[derive(Clone, Debug, Deserialize, Serialize)]
     pub struct StateDiff {
         pub declared_classes: Vec<NewClasses>,
         pub deployed_contracts: Vec<DeployedContractItem>,
@@ -2484,7 +2478,7 @@ pub mod gen {
         async fn estimateFee(
             &self,
             request: Vec<BroadcastedTxn>,
-            simulation_flags: Vec<SimulationFlagForEstimateFee>,
+            simulation_flags: Vec<SimulationFlag>,
             block_id: BlockId,
         ) -> std::result::Result<Vec<FeeEstimate>, jsonrpc::Error>;
 
@@ -2952,16 +2946,12 @@ pub mod gen {
         params: &Value,
     ) -> jsonrpc::Response {
         #[derive(Deserialize, Serialize)]
-        struct ArgByPos(
-            Vec<BroadcastedTxn>,
-            Vec<SimulationFlagForEstimateFee>,
-            BlockId,
-        );
+        struct ArgByPos(Vec<BroadcastedTxn>, Vec<SimulationFlag>, BlockId);
 
         #[derive(Deserialize, Serialize)]
         struct ArgByName {
             request: Vec<BroadcastedTxn>,
-            simulation_flags: Vec<SimulationFlagForEstimateFee>,
+            simulation_flags: Vec<SimulationFlag>,
             block_id: BlockId,
         }
 
@@ -4056,7 +4046,7 @@ pub mod gen {
             fn estimateFee(
                 &self,
                 request: Vec<BroadcastedTxn>,
-                simulation_flags: Vec<SimulationFlagForEstimateFee>,
+                simulation_flags: Vec<SimulationFlag>,
                 block_id: BlockId,
             ) -> std::result::Result<Vec<FeeEstimate>, jsonrpc::Error>;
 
@@ -4545,16 +4535,12 @@ pub mod gen {
             params: &Value,
         ) -> jsonrpc::Response {
             #[derive(Deserialize, Serialize)]
-            struct ArgByPos(
-                Vec<BroadcastedTxn>,
-                Vec<SimulationFlagForEstimateFee>,
-                BlockId,
-            );
+            struct ArgByPos(Vec<BroadcastedTxn>, Vec<SimulationFlag>, BlockId);
 
             #[derive(Deserialize, Serialize)]
             struct ArgByName {
                 request: Vec<BroadcastedTxn>,
-                simulation_flags: Vec<SimulationFlagForEstimateFee>,
+                simulation_flags: Vec<SimulationFlag>,
                 block_id: BlockId,
             }
 
@@ -6173,7 +6159,7 @@ pub mod gen {
             async fn estimateFee(
                 &self,
                 request: Vec<BroadcastedTxn>,
-                simulation_flags: Vec<SimulationFlagForEstimateFee>,
+                simulation_flags: Vec<SimulationFlag>,
                 block_id: BlockId,
             ) -> std::result::Result<Vec<FeeEstimate>, jsonrpc::Error>
             {
@@ -7852,7 +7838,7 @@ pub mod gen {
                 fn estimateFee(
                     &self,
                     request: Vec<BroadcastedTxn>,
-                    simulation_flags: Vec<SimulationFlagForEstimateFee>,
+                    simulation_flags: Vec<SimulationFlag>,
                     block_id: BlockId,
                 ) -> std::result::Result<Vec<FeeEstimate>, jsonrpc::Error>
                 {

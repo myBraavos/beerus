@@ -82,3 +82,17 @@ pub fn simulate<T: gen::client::blocking::HttpClient + Clone>(
         executor::CallExecutor::new(client, state, rate_limiter, settings);
     executor.simulate(transactions, simulation_flags, gas_prices)
 }
+
+pub fn estimate_fee<T: gen::client::blocking::HttpClient + Clone>(
+    client: gen::client::blocking::Client<T>,
+    transactions: Vec<gen::BroadcastedTxn>,
+    simulation_flags: Vec<gen::SimulationFlag>,
+    state: State,
+    gas_prices: &GasPrices,
+    rate_limiter: RateLimiter,
+    settings: Arc<RwLock<Settings>>,
+) -> Result<Vec<gen::FeeEstimate>, Error> {
+    let executor =
+        executor::CallExecutor::new(client, state, rate_limiter, settings);
+    executor.estimate_fee(transactions, simulation_flags, gas_prices)
+}

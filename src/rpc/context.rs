@@ -22,7 +22,7 @@ use crate::{
         GetEventsFilter, GetProofResult, GetStateUpdateResult,
         GetTransactionByBlockIdAndIndexResult, GetTransactionByHashResult,
         GetTransactionStatusResult, MsgFromL1, SimulatedTransaction,
-        SimulationFlag, SimulationFlagForEstimateFee, StorageKey,
+        SimulationFlag, StorageKey,
         SyncingResult, TransactionTrace, TxGatewayStatus, TxnHash,
     },
 };
@@ -176,14 +176,32 @@ impl<S: StorageProviderTrait> gen::Rpc for Context<S> {
     async fn estimateFee(
         &self,
         request: Vec<BroadcastedTxn>,
-        simulation_flags: Vec<SimulationFlagForEstimateFee>,
+        simulation_flags: Vec<SimulationFlag>,
         block_id: BlockId,
     ) -> Result<Vec<FeeEstimate>, jsonrpc::Error> {
-        self.client
-            .starknet()
+        // simulate requests are heavy, block all background tasks
+        let _guard = self.async_blocker.block_tasks();
+        tracing::info!("Received estimate fee request on block {:?}", block_id);
+
+        let state = self
+            .client
+            .get_state_at(block_id)
             .await
-            .estimateFee(request, simulation_flags, block_id)
-            .await
+            .map_err(|e| jsonrpc::Error::new(-32602, e.to_string()))?;
+        let client = gen::client::blocking::Client::new(
+            &self.client.starknet().await.url,
+            self.client.http().clone(),
+        );
+        exe::estimate_fee(
+            client,
+            request,
+            simulation_flags,
+            state,
+            &self.client.gas_prices(),
+            self.client.rate_limiter(),
+            self.client.settings(),
+        )
+        .map_err(|e| jsonrpc::Error::new(-32602, e.to_string()))
     }
 
     async fn estimateMessageFee(
@@ -340,7 +358,7 @@ impl<S: StorageProviderTrait> gen::Rpc for Context<S> {
         transactions: Vec<BroadcastedTxn>,
         simulation_flags: Vec<SimulationFlag>,
     ) -> Result<Vec<SimulatedTransaction>, jsonrpc::Error> {
-        // Call requests are heavy, block all background tasks
+        // simulate requests are heavy, block all background tasks
         let _guard = self.async_blocker.block_tasks();
         tracing::info!("Received simulate request on block {:?}", block_id);
 

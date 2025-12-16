@@ -29,8 +29,11 @@ use std::sync::RwLock;
 use crate::{
     client::{rate_limiter::RateLimiter, settings::Settings, State},
     exe::{
-        cache, contract_loader::ContractLoader, err::Error,
-        simulate::simulate_transactions, utils::transform_trace_json,
+        cache,
+        contract_loader::ContractLoader,
+        err::Error,
+        simulate::{simulate_transactions, TransactionSimulationOutput},
+        utils::transform_trace_json,
     },
     gen::{self, blocking::Rpc},
 };
@@ -164,45 +167,8 @@ impl<T: gen::client::blocking::HttpClient + Clone> CallExecutor<T> {
         simulation_flags: Vec<gen::SimulationFlag>,
         gas_prices: &GasPrices,
     ) -> Result<Vec<gen::SimulatedTransaction>, Error> {
-        let mut charge_fee = true;
-        let mut validate = true;
-        for flag in simulation_flags {
-            match flag {
-                gen::SimulationFlag::SkipFeeCharge => charge_fee = false,
-                gen::SimulationFlag::SkipValidate => validate = false,
-            }
-        }
-
-        let state_proxy: StateProxy<T> = StateProxy {
-            client: self.client.clone(),
-            state: self.state.clone(),
-            rate_limiter: self.rate_limiter.clone(),
-            settings: self.settings.clone(),
-        };
-        let state_proxy = cache::CachedState::new(state_proxy);
-
-        // Convert BroadcastedTxn to ExecutableTransactionInput
-        let executable_transactions: Vec<
-            apollo_rpc_execution::ExecutableTransactionInput,
-        > = transactions
-            .into_iter()
-            .map(|tx| tx.try_into())
-            .collect::<Result<Vec<_>, _>>()?;
-
-        let res = simulate_transactions(
-            executable_transactions,
-            &starknet_api::core::ChainId::Mainnet,
-            state_proxy,
-            gas_prices,
-            BlockNumber(self.state.block_number as u64),
-            BlockTimestamp::from(self.state.timestamp as u64),
-            charge_fee,
-            validate,
-        )
-        .map_err(Error::from)?;
-
-        tracing::debug!("Simulation result: {:?}", res);
-
+        let res =
+            self.do_simulate(transactions, simulation_flags, gas_prices)?;
         // Convert TransactionSimulationOutput to gen::SimulatedTransaction
         // Use serde_json to convert, handling the enum structure properly
         let converted: Vec<gen::SimulatedTransaction> = res
@@ -255,6 +221,80 @@ impl<T: gen::client::blocking::HttpClient + Clone> CallExecutor<T> {
             .collect::<Result<Vec<_>, Error>>()?;
 
         Ok(converted)
+    }
+
+    pub fn estimate_fee(
+        &self,
+        transactions: Vec<gen::BroadcastedTxn>,
+        simulation_flags: Vec<gen::SimulationFlag>,
+        gas_prices: &GasPrices,
+    ) -> Result<Vec<gen::FeeEstimate>, Error> {
+        let res =
+            self.do_simulate(transactions, simulation_flags, gas_prices)?;
+        let fee_estimates: Vec<gen::FeeEstimate> = res
+            .into_iter()
+            .map(|output| {
+                serde_json::to_value(output.fee_estimation)
+                    .map_err(|e| Error::IamGroot(iamgroot::jsonrpc::Error::new(
+                        32101,
+                        format!("Failed to serialize fee estimation: {e:?}"),
+                    )))
+                    .and_then(|value| {
+                        serde_json::from_value(value).map_err(|e| Error::IamGroot(iamgroot::jsonrpc::Error::new(
+                            32101,
+                            format!("Failed to deserialize fee estimation: {e:?}"),
+                        )))
+                    })
+            })
+            .collect::<Result<Vec<_>, Error>>()?;
+        Ok(fee_estimates)
+    }
+
+    fn do_simulate(
+        &self,
+        transactions: Vec<gen::BroadcastedTxn>,
+        simulation_flags: Vec<gen::SimulationFlag>,
+        gas_prices: &GasPrices,
+    ) -> Result<Vec<TransactionSimulationOutput>, Error> {
+        let mut charge_fee = true;
+        let mut validate = true;
+        for flag in simulation_flags {
+            match flag {
+                gen::SimulationFlag::SkipFeeCharge => charge_fee = false,
+                gen::SimulationFlag::SkipValidate => validate = false,
+            }
+        }
+
+        let state_proxy: StateProxy<T> = StateProxy {
+            client: self.client.clone(),
+            state: self.state.clone(),
+            rate_limiter: self.rate_limiter.clone(),
+            settings: self.settings.clone(),
+        };
+        let state_proxy = cache::CachedState::new(state_proxy);
+
+        // Convert BroadcastedTxn to ExecutableTransactionInput
+        let executable_transactions: Vec<
+            apollo_rpc_execution::ExecutableTransactionInput,
+        > = transactions
+            .into_iter()
+            .map(|tx| tx.try_into())
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let res = simulate_transactions(
+            executable_transactions,
+            &starknet_api::core::ChainId::Mainnet,
+            state_proxy,
+            gas_prices,
+            BlockNumber(self.state.block_number as u64),
+            BlockTimestamp::from(self.state.timestamp as u64),
+            charge_fee,
+            validate,
+        )
+        .map_err(Error::from)?;
+
+        tracing::debug!("Simulation result: {:?}", res);
+        Ok(res)
     }
 }
 
