@@ -119,7 +119,7 @@ async fn main() -> Result<()> {
     //     ],
     // };
 
-    let state = beerus.get_verified_state(
+    let state = beerus.verify_and_update_state(
         &Felt::try_new("0x7256dde30ae68f43f3def9ce2a4433dd3de11b630d4f84336891bad8fe4127e")?,
         Some(Felt::try_new("0x6084bda2cd3247aa11364404f7918001e82a7567cfe0b949fa6a7f3d4b4099f")?),
     ).await?;

@@ -2,9 +2,9 @@ use beerus::client::{Client, Http};
 use beerus::config::Config;
 use beerus::gen::{Address, Felt};
 use beerus::r#gen::{
-    BlockId, BlockNumber, BroadcastedInvokeTxn, BroadcastedTxn, DaMode,
-    InvokeTxn, InvokeTxnV3, InvokeTxnV3Type, InvokeTxnV3Version,
-    ResourceBounds, ResourceBoundsMapping, SimulationFlag, U128, U64,
+    BroadcastedInvokeTxn, BroadcastedTxn, DaMode, InvokeTxn, InvokeTxnV3,
+    InvokeTxnV3Type, InvokeTxnV3Version, ResourceBounds, ResourceBoundsMapping,
+    SimulationFlag, U128, U64,
 };
 use beerus::storage::sql_storage_provider::SqlStorageProvider;
 use eyre::Result;
@@ -33,7 +33,7 @@ async fn main() -> Result<()> {
         Arc::new(SqlStorageProvider::new(&config.database_url).await?);
     let beerus = Client::new(&config, http, storage).await?;
 
-    let state = beerus.get_verified_state(
+    let state = beerus.verify_and_update_state(
         &Felt::try_new("0x4f5fd556dd1fb7ece5c6ae031221f6c96321763cf5308de77bc0c1c4333d9ed")?,
         Some(Felt::try_new("0x6acfe9f4b8087025be737085e2417746482b4258a635ed680b2ba17098cefe0")?),
     ).await?;

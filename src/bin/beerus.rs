@@ -48,8 +48,9 @@ async fn main() -> eyre::Result<()> {
                     (tick, l1_sync_check, gateway_state, verified_state)
                 }
                 Err(e) => {
-                    tracing::error!(error=%e, "failed to prepare main loop, exiting sync task");
-                    return;
+                    panic!(
+                        "failed to prepare main loop, exiting sync task: {e:?}"
+                    );
                 }
             };
             loop {
@@ -149,7 +150,7 @@ async fn prepare_main_loop(
     // Decide sync starting point: if L1 head is ahead of L2, start from there, else use last L2.
     let mut verified_state = if l1_state.block_number > latest_stored_block {
         let state =
-            beerus.get_verified_state(&l1_state.block_hash, None).await?;
+            beerus.verify_and_update_state(&l1_state.block_hash, None).await?;
         beerus.store_latest_l1_range(&l1_state).await?;
         state
     } else {
@@ -232,7 +233,7 @@ async fn execute_sync(
         // retrying if necessary using with_retry for resilience.
         *verified_state = with_retry(|| async {
             beerus
-                .get_verified_state(
+                .verify_and_update_state(
                     &gateway_state.block_hash,
                     Some(verified_state.block_hash.clone()),
                 )

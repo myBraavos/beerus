@@ -34,7 +34,7 @@ async fn main() -> Result<()> {
 
     let gateway_state = beerus.get_latest_gateway_state().await?;
     let state =
-        beerus.get_verified_state(&gateway_state.block_hash, None).await?;
+        beerus.verify_and_update_state(&gateway_state.block_hash, None).await?;
     tracing::info!("synced: {state:#?}");
     Ok(())
 }

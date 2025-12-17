@@ -165,7 +165,7 @@ impl<S: StorageProviderTrait> BackgroundLoader<S> {
                     self.client.get_gateway_state(l1_range.l2_start).await?;
                 let start_state = self
                     .client
-                    .get_verified_state(&gateway_state.block_hash, None)
+                    .verify_and_update_state(&gateway_state.block_hash, None)
                     .await?;
                 let end_state =
                     self.client.get_gateway_state(l1_range.l2_end).await?;

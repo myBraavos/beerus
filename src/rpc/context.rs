@@ -22,8 +22,8 @@ use crate::{
         GetEventsFilter, GetProofResult, GetStateUpdateResult,
         GetTransactionByBlockIdAndIndexResult, GetTransactionByHashResult,
         GetTransactionStatusResult, MsgFromL1, SimulatedTransaction,
-        SimulationFlag, StorageKey,
-        SyncingResult, TransactionTrace, TxGatewayStatus, TxnHash,
+        SimulationFlag, StorageKey, SyncingResult, TransactionTrace,
+        TxGatewayStatus, TxnHash,
     },
 };
 

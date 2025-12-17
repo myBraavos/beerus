@@ -232,7 +232,7 @@ impl<
     /// # Errors
     /// Returns an error if any RPC or data conversion fails, the parent hash does not match (if provided),
     /// the Starknet version is unsupported, or validation of the block hash relationship fails.
-    pub async fn get_verified_state(
+    pub async fn verify_and_update_state(
         &self,
         block_hash: &Felt,
         prev_block_hash: Option<Felt>,
@@ -672,8 +672,9 @@ impl<
 
         // Get verified state for the target block
         let gateway_state = self.get_gateway_state(block_number).await?;
-        let target_state =
-            self.get_verified_state(&gateway_state.block_hash, None).await?;
+        let target_state = self
+            .verify_and_update_state(&gateway_state.block_hash, None)
+            .await?;
 
         // If an end state is the same as the target state, it means the chain was already verified
         // or the block is at the L1 range boundary
@@ -837,7 +838,10 @@ impl<
         // Persist all newly discovered L1 sub-ranges for future efficiency.
         self.storage().write_l1_ranges(&new_l1_ranges).await?;
 
-        // Fetch the starting state for the minimal range. This will always be present, otherwise we received invalid data from L1.
+        // This range might be partially processed, try to find if we have block_number < l2_end
+        //    if range is [A; A+100], and we previously processed block A+50,
+        //    it means all blocks in range [A+50; A+100] are already verified
+        //    so for the block A+20, we need to verify blocks [A+20; A+50]
         let end_state_from_storage =
             self.storage().read_state_after(block_number).await;
         if let Ok(end_state_from_storage) = end_state_from_storage {
@@ -1084,7 +1088,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_get_verified_state() {
+    async fn test_verify_and_update_state() {
         let block_hash = Felt::try_new(
             "0x1a3ef8f9469ee2f4612717b1b6fb1314c82d8267ae175b71e218b1123294947",
         )
@@ -1100,8 +1104,9 @@ mod tests {
         let storage = Arc::new(MockStorageProvider::new());
         let client = Client::new(&config, Http::new(), storage).await.unwrap();
 
-        let result =
-            client.get_verified_state(&block_hash, Some(prev_block_hash)).await;
+        let result = client
+            .verify_and_update_state(&block_hash, Some(prev_block_hash))
+            .await;
         assert!(result.is_ok(), "Expected successful state verification");
         let state = result.unwrap();
         assert_eq!(state.block_number, 100);
@@ -1109,7 +1114,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_get_verified_state_invalid_prev_block_hash() {
+    async fn test_verify_and_update_state_invalid_prev_block_hash() {
         let block_hash = Felt::try_new(
             "0x1a3ef8f9469ee2f4612717b1b6fb1314c82d8267ae175b71e218b1123294947",
         )
@@ -1125,8 +1130,9 @@ mod tests {
         let storage = Arc::new(MockStorageProvider::new());
         let client = Client::new(&config, Http::new(), storage).await.unwrap();
 
-        let result =
-            client.get_verified_state(&block_hash, Some(prev_block_hash)).await;
+        let result = client
+            .verify_and_update_state(&block_hash, Some(prev_block_hash))
+            .await;
         assert!(
             result
                 .unwrap_err()
@@ -1137,7 +1143,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_get_verified_state_with_commitments() {
+    async fn test_verify_and_update_state_with_commitments() {
         let block_hash = Felt::try_new(
             "0xdeb815f91f135a1abcf17e52770a0e59418b8b02cea3698d1006803bde4ab5",
         )
@@ -1202,8 +1208,9 @@ mod tests {
         let storage = Arc::new(MockStorageProvider::new());
         let client = Client::new(&config, Http::new(), storage).await.unwrap();
 
-        let result =
-            client.get_verified_state(&block_hash, Some(prev_block_hash)).await;
+        let result = client
+            .verify_and_update_state(&block_hash, Some(prev_block_hash))
+            .await;
         // assert!(result.is_ok(), "Expected successful state verification");
         let state = result.unwrap();
         assert_eq!(state.block_number, 100);
