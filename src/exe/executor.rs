@@ -229,6 +229,8 @@ impl<T: gen::client::blocking::HttpClient + Clone> CallExecutor<T> {
         simulation_flags: Vec<gen::SimulationFlag>,
         gas_prices: &GasPrices,
     ) -> Result<Vec<gen::FeeEstimate>, Error> {
+        let mut simulation_flags = simulation_flags;
+        simulation_flags.push(gen::SimulationFlag::SkipFeeCharge);
         let res =
             self.do_simulate(transactions, simulation_flags, gas_prices)?;
         let fee_estimates: Vec<gen::FeeEstimate> = res

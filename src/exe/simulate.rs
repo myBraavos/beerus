@@ -76,8 +76,6 @@ pub struct TransactionSimulationOutput {
 }
 
 #[allow(clippy::too_many_arguments)]
-// TODO(Dan, Yair): consider box large elements (because of BadDeclareTransaction) or use ID
-// instead.
 fn execute_transactions<T: StateReader + BlockifierState + HasBlockHash>(
     txs: Vec<ExecutableTransactionInput>,
     chain_id: &ChainId,
@@ -129,7 +127,6 @@ fn execute_transactions<T: StateReader + BlockifierState + HasBlockHash>(
             charge_fee,
             validate,
         )?;
-        // TODO(Yoni): use the TransactionExecutor instead.
         let tx_execution_info_result =
             blockifier_tx.execute(&mut transactional_state, &block_context);
         let state_diff = induced_state_diff(
@@ -342,14 +339,20 @@ fn tx_execution_output_to_fee_estimation(
 
     let gas_vector = tx_execution_output.execution_info.receipt.gas;
 
+    // Add 30% to match local and remote execution results.
+    let l2_gas_consumed = gas_vector.l2_gas.0 * 13 / 10;
+    let extra_fee =
+        (l2_gas_consumed - gas_vector.l2_gas.0) * l2_gas_price.0 as u64;
+
     Ok(FeeEstimation {
         l1_gas_consumed: gas_vector.l1_gas.0.into(),
         l1_gas_price,
         l1_data_gas_consumed: gas_vector.l1_data_gas.0.into(),
         l1_data_gas_price,
-        l2_gas_consumed: gas_vector.l2_gas.0.into(),
+        l2_gas_consumed: l2_gas_consumed.into(),
         l2_gas_price,
-        overall_fee: tx_execution_output.execution_info.receipt.fee,
+        overall_fee: Fee(tx_execution_output.execution_info.receipt.fee.0
+            + extra_fee as u128),
         unit: tx_execution_output.price_unit,
     })
 }
@@ -364,8 +367,6 @@ fn to_blockifier_tx(
     charge_fee: bool,
     validate: bool,
 ) -> ExecutionResult<BlockifierTransaction> {
-    // TODO(yair): support only_query version bit (enable in the RPC v0.6 and use the correct
-    // value).
     let strict_nonce_check = true;
     match tx {
         ExecutableTransactionInput::Invoke(invoke_tx, only_query) => {
@@ -592,13 +593,3 @@ fn induced_state_diff<T: StateReader + BlockifierState + HasBlockHash>(
         nonces: blockifier_state_diff.address_to_nonce,
     })
 }
-
-// need to:
-// - add logic for the state
-// + build block context
-//  + seems like we don`t need pre_process_block
-// - map params
-// - integrate with context.rs simulateTransactions
-//
-// missing:
-// - gas info for past blocks (can be provided in the pending data, should update this struct during sync)

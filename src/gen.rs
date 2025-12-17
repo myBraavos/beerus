@@ -297,7 +297,7 @@ pub mod gen {
         Declare,
     }
 
-    #[derive(Clone, Debug, Deserialize, Serialize)]
+    #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
     pub enum BroadcastedDeclareTxnV1Version {
         #[serde(rename = "0x1")]
         V0x1,
@@ -323,7 +323,7 @@ pub mod gen {
         Declare,
     }
 
-    #[derive(Clone, Debug, Deserialize, Serialize)]
+    #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
     pub enum BroadcastedDeclareTxnV2Version {
         #[serde(rename = "0x2")]
         V0x2,
@@ -354,7 +354,7 @@ pub mod gen {
         Declare,
     }
 
-    #[derive(Clone, Debug, Deserialize, Serialize)]
+    #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
     pub enum BroadcastedDeclareTxnV3Version {
         #[serde(rename = "0x3")]
         V0x3,
@@ -587,7 +587,7 @@ pub mod gen {
         Declare,
     }
 
-    #[derive(Clone, Debug, Deserialize, Serialize)]
+    #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
     pub enum DeclareTxnV0Version {
         #[serde(rename = "0x0")]
         V0x0,
@@ -612,7 +612,7 @@ pub mod gen {
         Declare,
     }
 
-    #[derive(Clone, Debug, Deserialize, Serialize)]
+    #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
     pub enum DeclareTxnV1Version {
         #[serde(rename = "0x1")]
         V0x1,
@@ -638,7 +638,7 @@ pub mod gen {
         Declare,
     }
 
-    #[derive(Clone, Debug, Deserialize, Serialize)]
+    #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
     pub enum DeclareTxnV2Version {
         #[serde(rename = "0x2")]
         V0x2,
@@ -669,7 +669,7 @@ pub mod gen {
         Declare,
     }
 
-    #[derive(Clone, Debug, Deserialize, Serialize)]
+    #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
     pub enum DeclareTxnV3Version {
         #[serde(rename = "0x3")]
         V0x3,
@@ -738,7 +738,7 @@ pub mod gen {
         DeployAccount,
     }
 
-    #[derive(Clone, Debug, Deserialize, Serialize)]
+    #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
     pub enum DeployAccountTxnV1Version {
         #[serde(rename = "0x1")]
         V0x1,
@@ -768,7 +768,7 @@ pub mod gen {
         DeployAccount,
     }
 
-    #[derive(Clone, Debug, Deserialize, Serialize)]
+    #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
     pub enum DeployAccountTxnV3Version {
         #[serde(rename = "0x3")]
         V0x3,
@@ -1275,7 +1275,7 @@ pub mod gen {
         Invoke,
     }
 
-    #[derive(Clone, Debug, Deserialize, Serialize)]
+    #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
     pub enum InvokeTxnV0Version {
         #[serde(rename = "0x0")]
         V0x0,
@@ -1300,7 +1300,7 @@ pub mod gen {
         Invoke,
     }
 
-    #[derive(Clone, Debug, Deserialize, Serialize)]
+    #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
     pub enum InvokeTxnV1Version {
         #[serde(rename = "0x1")]
         V0x1,
@@ -1330,7 +1330,7 @@ pub mod gen {
         Invoke,
     }
 
-    #[derive(Clone, Debug, Deserialize, Serialize)]
+    #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
     pub enum InvokeTxnV3Version {
         #[serde(rename = "0x3")]
         V0x3,
@@ -2011,6 +2011,8 @@ pub mod gen {
         AcceptedOnL2,
         #[serde(rename = "ACCEPTED_ON_L1")]
         AcceptedOnL1,
+        #[serde(rename = "PRE_CONFIRMED")]
+        PreConfirmed,
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -9570,9 +9572,11 @@ impl TryFrom<BroadcastedTxn> for ExecutableTransactionInput {
                             calldata,
                         };
 
+                        let only_query = v0.version == InvokeTxnV0Version::V0x0;
+
                         Ok(ExecutableTransactionInput::Invoke(
                             InvokeTransaction::V0(tx),
-                            false,
+                            only_query,
                         ))
                     }
                     InvokeTxn::InvokeTxnV1(v1) => {
@@ -9604,9 +9608,11 @@ impl TryFrom<BroadcastedTxn> for ExecutableTransactionInput {
                             calldata,
                         };
 
+                        let only_query = v1.version == InvokeTxnV1Version::V0x100000000000000000000000000000001;
+
                         Ok(ExecutableTransactionInput::Invoke(
                             InvokeTransaction::V1(tx),
-                            false,
+                            only_query,
                         ))
                     }
                     InvokeTxn::InvokeTxnV3(v3) => {
@@ -9657,8 +9663,18 @@ impl TryFrom<BroadcastedTxn> for ExecutableTransactionInput {
                                     .into(),
                                 },
                                 l1_data_gas: ResourceBounds {
-                                    max_amount: 0u64.into(),
-                                    max_price_per_unit: 0u128.into(),
+                                    max_amount: u64_to_u64(
+                                        v3.resource_bounds
+                                            .l1_data_gas
+                                            .max_amount,
+                                    )?
+                                    .into(),
+                                    max_price_per_unit: u128_to_u128(
+                                        v3.resource_bounds
+                                            .l1_data_gas
+                                            .max_price_per_unit,
+                                    )?
+                                    .into(),
                                 },
                             },
                         );
@@ -9697,10 +9713,11 @@ impl TryFrom<BroadcastedTxn> for ExecutableTransactionInput {
                             paymaster_data,
                             account_deployment_data,
                         };
+                        let only_query = v3.version == InvokeTxnV3Version::V0x100000000000000000000000000000003;
 
                         Ok(ExecutableTransactionInput::Invoke(
                             InvokeTransaction::V3(tx),
-                            false,
+                            only_query,
                         ))
                     }
                 }
@@ -9744,11 +9761,13 @@ impl TryFrom<BroadcastedTxn> for ExecutableTransactionInput {
                             .as_ref()
                             .map_or(0, |abi| abi.len());
 
+                        let only_query = v1.version == BroadcastedDeclareTxnV1Version::V0x100000000000000000000000000000001;
+
                         Ok(ExecutableTransactionInput::DeclareV1(
                             tx,
                             deprecated_class,
                             abi_length,
-                            false,
+                            only_query,
                         ))
                     }
                     BroadcastedDeclareTxn::BroadcastedDeclareTxnV2(v2) => {
@@ -9832,12 +9851,14 @@ impl TryFrom<BroadcastedTxn> for ExecutableTransactionInput {
                                 .unwrap_or(0),
                         );
 
+                        let only_query = v2.version == BroadcastedDeclareTxnV2Version::V0x100000000000000000000000000000002;
+
                         Ok(ExecutableTransactionInput::DeclareV2(
                             tx,
                             casm_contract_class,
                             sierra_program_length,
                             abi_length,
-                            false,
+                            only_query,
                             sierra_version,
                         ))
                     }
@@ -9982,12 +10003,14 @@ impl TryFrom<BroadcastedTxn> for ExecutableTransactionInput {
                                 .unwrap_or(0),
                         );
 
+                        let only_query = v3.version == BroadcastedDeclareTxnV3Version::V0x100000000000000000000000000000003;
+
                         Ok(ExecutableTransactionInput::DeclareV3(
                             tx,
                             casm_contract_class,
                             sierra_program_length,
                             abi_length,
-                            false,
+                            only_query,
                             sierra_version,
                         ))
                     }
@@ -10029,9 +10052,11 @@ impl TryFrom<BroadcastedTxn> for ExecutableTransactionInput {
                             constructor_calldata,
                         };
 
+                        let only_query = v1.version == DeployAccountTxnV1Version::V0x100000000000000000000000000000001;
+
                         Ok(ExecutableTransactionInput::DeployAccount(
                             DeployAccountTransaction::V1(tx),
-                            false,
+                            only_query,
                         ))
                     }
                     DeployAccountTxn::DeployAccountTxnV3(v3) => {
@@ -10120,9 +10145,11 @@ impl TryFrom<BroadcastedTxn> for ExecutableTransactionInput {
                             paymaster_data,
                         };
 
+                        let only_query = v3.version == DeployAccountTxnV3Version::V0x100000000000000000000000000000003;
+
                         Ok(ExecutableTransactionInput::DeployAccount(
                             DeployAccountTransaction::V3(tx),
-                            false,
+                            only_query,
                         ))
                     }
                 }
