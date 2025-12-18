@@ -8,6 +8,7 @@ use crate::r#gen::{
     TxnReceiptWithBlockInfo,
 };
 use crate::storage::storage_trait::StorageProviderTrait;
+use crate::util::is_block_tag;
 use crate::{
     client::{Client, State as ClientState},
     exe,
@@ -142,6 +143,18 @@ impl<S: StorageProviderTrait> gen::Rpc for Context<S> {
         let _guard = self.async_blocker.block_tasks();
         tracing::info!("Received call request on block {:?}", block_id);
 
+        if !is_block_tag(&block_id)
+            && !self.client.config().validate_historical_blocks
+        {
+            // do direct rpc request without validation
+            return self
+                .client
+                .starknet()
+                .await
+                .call(request, block_id)
+                .await;
+        }
+
         let state = self
             .client
             .get_state_at(block_id)
@@ -182,6 +195,18 @@ impl<S: StorageProviderTrait> gen::Rpc for Context<S> {
         // simulate requests are heavy, block all background tasks
         let _guard = self.async_blocker.block_tasks();
         tracing::info!("Received estimate fee request on block {:?}", block_id);
+
+        if !is_block_tag(&block_id)
+            && !self.client.config().validate_historical_blocks
+        {
+            // do direct rpc request without validation
+            return self
+                .client
+                .starknet()
+                .await
+                .estimateFee(request, simulation_flags, block_id)
+                .await;
+        }
 
         let state = self
             .client
@@ -361,6 +386,18 @@ impl<S: StorageProviderTrait> gen::Rpc for Context<S> {
         // simulate requests are heavy, block all background tasks
         let _guard = self.async_blocker.block_tasks();
         tracing::info!("Received simulate request on block {:?}", block_id);
+
+        if !is_block_tag(&block_id)
+            && !self.client.config().validate_historical_blocks
+        {
+            // do direct rpc request without validation
+            return self
+                .client
+                .starknet()
+                .await
+                .simulateTransactions(block_id, transactions, simulation_flags)
+                .await;
+        }
 
         let state = self
             .client
