@@ -24,7 +24,7 @@ use crate::gen::{
 use crate::gen::{BlockHash, BlockNumber, BlockWithReceipts, StateUpdate};
 use crate::r#gen::BlockWithTxHashes;
 use crate::storage::storage_trait::StorageProviderTrait;
-use crate::util::with_retry;
+use crate::util::{with_retry, FIRST_SUPPORTED_BLOCK_NUMBER};
 
 pub mod block_hash;
 pub mod http;
@@ -40,7 +40,6 @@ pub use utils::as_felt;
 
 const MIN_RPC_SPEC_VERSION: &str = "0.8.1";
 const COMMITMENTS_RPC_SPEC_VERSION: &str = "0.10.0";
-pub const FIRST_SUPPORTED_BLOCK_NUMBER: i64 = 1_000_000;
 
 type L1LockMap = Arc<TokioRwLock<HashMap<(i64, i64), Arc<Mutex<()>>>>>;
 

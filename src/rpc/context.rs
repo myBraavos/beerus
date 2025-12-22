@@ -8,7 +8,7 @@ use crate::r#gen::{
     TxnReceiptWithBlockInfo,
 };
 use crate::storage::storage_trait::StorageProviderTrait;
-use crate::util::is_block_tag;
+use crate::util::{is_block_tag, is_not_verifiable};
 use crate::{
     client::{Client, State as ClientState},
     exe,
@@ -57,6 +57,12 @@ impl<S: StorageProviderTrait> Context<S> {
     /// Update the current state
     pub async fn update_state(&self, new_state: ClientState) {
         *self.state.write().await = new_state;
+    }
+
+    fn should_skip_validation(&self, block_id: &BlockId) -> bool {
+        is_not_verifiable(block_id)
+            || (is_block_tag(block_id)
+                && !self.client.config().validate_historical_blocks)
     }
 }
 
@@ -143,16 +149,9 @@ impl<S: StorageProviderTrait> gen::Rpc for Context<S> {
         let _guard = self.async_blocker.block_tasks();
         tracing::info!("Received call request on block {:?}", block_id);
 
-        if !is_block_tag(&block_id)
-            && !self.client.config().validate_historical_blocks
-        {
+        if self.should_skip_validation(&block_id) {
             // do direct rpc request without validation
-            return self
-                .client
-                .starknet()
-                .await
-                .call(request, block_id)
-                .await;
+            return self.client.starknet().await.call(request, block_id).await;
         }
 
         let state = self
@@ -196,9 +195,7 @@ impl<S: StorageProviderTrait> gen::Rpc for Context<S> {
         let _guard = self.async_blocker.block_tasks();
         tracing::info!("Received estimate fee request on block {:?}", block_id);
 
-        if !is_block_tag(&block_id)
-            && !self.client.config().validate_historical_blocks
-        {
+        if self.should_skip_validation(&block_id) {
             // do direct rpc request without validation
             return self
                 .client
@@ -387,9 +384,7 @@ impl<S: StorageProviderTrait> gen::Rpc for Context<S> {
         let _guard = self.async_blocker.block_tasks();
         tracing::info!("Received simulate request on block {:?}", block_id);
 
-        if !is_block_tag(&block_id)
-            && !self.client.config().validate_historical_blocks
-        {
+        if self.should_skip_validation(&block_id) {
             // do direct rpc request without validation
             return self
                 .client

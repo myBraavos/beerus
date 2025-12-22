@@ -9,6 +9,8 @@ use tokio_retry::Retry;
 
 use crate::r#gen::BlockId;
 
+pub const FIRST_SUPPORTED_BLOCK_NUMBER: i64 = 1_000_000;
+
 pub fn felt_to_bits(felt: &[u8; 32]) -> BitVec<u8, Msb0> {
     felt.view_bits::<Msb0>()[5..].to_bitvec()
 }
@@ -39,6 +41,15 @@ pub fn felt_from_bits(
 
 pub fn is_block_tag(block_id: &BlockId) -> bool {
     matches!(block_id, BlockId::BlockTag(_))
+}
+
+pub fn is_not_verifiable(block_id: &BlockId) -> bool {
+    if let BlockId::BlockNumber { block_number } = block_id {
+        // FIXME: add verification for older blocks
+        block_number.0 <= FIRST_SUPPORTED_BLOCK_NUMBER
+    } else {
+        false
+    }
 }
 
 pub async fn with_retry<T, F, Fut>(action: F) -> Result<T>
