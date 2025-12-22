@@ -80,7 +80,7 @@ mod contract_class {
     use super::*;
 
     type Key = (U256, U256); // block hash + class hash
-    type Value = blockifier::execution::contract_class::ContractClass;
+    type Value = blockifier::execution::contract_class::RunnableCompiledClass;
 
     const SIZE: usize = 256;
 
@@ -171,11 +171,11 @@ impl<T: StateReader + BlockifierState + HasBlockHash> StateReader
         Ok(ret)
     }
 
-    fn get_compiled_contract_class(
+    fn get_compiled_class(
         &self,
         class_hash: starknet_api::core::ClassHash,
     ) -> blockifier::state::state_api::StateResult<
-        blockifier::execution::contract_class::ContractClass,
+        blockifier::execution::contract_class::RunnableCompiledClass,
     > {
         let block_hash = self.inner.get_block_hash();
         if let Some(ret) =
@@ -183,7 +183,7 @@ impl<T: StateReader + BlockifierState + HasBlockHash> StateReader
         {
             return Ok(ret);
         }
-        let ret = self.inner.get_compiled_contract_class(class_hash)?;
+        let ret = self.inner.get_compiled_class(class_hash)?;
         contract_class::set(
             contract_class::key(block_hash, &class_hash),
             ret.clone(),
@@ -231,7 +231,7 @@ impl<T: StateReader + BlockifierState + HasBlockHash> BlockifierState
     fn set_contract_class(
         &mut self,
         class_hash: starknet_api::core::ClassHash,
-        contract_class: blockifier::execution::contract_class::ContractClass,
+        contract_class: blockifier::execution::contract_class::RunnableCompiledClass,
     ) -> blockifier::state::state_api::StateResult<()> {
         self.inner.set_contract_class(class_hash, contract_class)
     }
@@ -242,13 +242,5 @@ impl<T: StateReader + BlockifierState + HasBlockHash> BlockifierState
         compiled_class_hash: starknet_api::core::CompiledClassHash,
     ) -> blockifier::state::state_api::StateResult<()> {
         self.inner.set_compiled_class_hash(class_hash, compiled_class_hash)
-    }
-
-    fn add_visited_pcs(
-        &mut self,
-        class_hash: starknet_api::core::ClassHash,
-        pcs: &std::collections::HashSet<usize>,
-    ) {
-        self.inner.add_visited_pcs(class_hash, pcs);
     }
 }

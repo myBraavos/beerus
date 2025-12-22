@@ -1,0 +1,40 @@
+services:
+  db:
+    image: postgres:16
+    container_name: postgres_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: beerus
+    ports:
+      - "5432:5432"
+    volumes:
+      - data_volume:/var/lib/postgresql/data
+
+  beerus:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: beerus
+    restart: unless-stopped
+    ports:
+      - "3030:3030"
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/beerus
+      ETH_RPC: ${ETH_RPC}
+      STARKNET_RPC: ${STARKNET_RPC}
+      GATEWAY_URL: ${GATEWAY_URL}
+      RPC_ADDR: ${RPC_ADDR:-0.0.0.0:3030}
+      POLL_SECS: ${POLL_SECS:-10}
+      L1_POLL_SECS: ${L1_POLL_SECS:-600}
+      L2_RATE_LIMIT: ${L2_RATE_LIMIT:-18}
+      L1_RANGE_BLOCKS: ${L1_RANGE_BLOCKS:-9}
+      RUST_LOG: ${RUST_LOG:-info}
+      DISABLE_BACKGROUND_LOADER: ${DISABLE_BACKGROUND_LOADER:-true}
+      VALIDATE_HISTORICAL_BLOCKS: ${VALIDATE_HISTORICAL_BLOCKS:-false}
+    depends_on:
+      - db
+
+volumes:
+  data_volume:
