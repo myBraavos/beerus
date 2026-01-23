@@ -1,6 +1,7 @@
+use apollo_rpc_execution::ExecutableTransactionInput;
 pub use gen::*;
+use starknet_api::{block::GasPrice, execution_resources::GasAmount};
 
-// TODO: must be handled in iamgroot
 #[allow(clippy::needless_return)]
 // vvv GENERATED CODE BELOW vvv
 #[allow(clippy::module_inception)]
@@ -18,7 +19,8 @@ pub mod gen {
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
     pub struct BinaryNode {
-        pub binary: BinaryNodeBinary,
+        pub node: BinaryNodeBinary,
+        pub node_hash: Felt,
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -56,11 +58,34 @@ pub mod gen {
         #[serde(default)]
         pub l1_data_gas_price: Option<ResourcePrice>,
         pub l1_gas_price: ResourcePrice,
+        pub l2_gas_price: ResourcePrice,
         pub new_root: Felt,
         pub parent_hash: BlockHash,
         pub sequencer_address: Felt,
         pub starknet_version: String,
         pub timestamp: BlockHeaderTimestamp,
+
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
+        pub event_commitment: Option<Felt>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
+        pub transaction_commitment: Option<Felt>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
+        pub receipt_commitment: Option<Felt>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
+        pub state_diff_commitment: Option<Felt>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
+        pub event_count: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
+        pub transaction_count: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
+        pub state_diff_length: Option<u64>,
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -75,7 +100,7 @@ pub mod gen {
     #[serde(try_from = "i64")]
     pub struct BlockHeaderTimestamp(i64);
 
-    mod blockheadertimestamp {
+    mod block_header_timestamp {
         use super::jsonrpc;
         use super::BlockHeaderTimestamp;
 
@@ -124,7 +149,7 @@ pub mod gen {
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
     #[serde(try_from = "i64")]
-    pub struct BlockNumber(i64);
+    pub struct BlockNumber(pub i64);
 
     mod blocknumber {
         use super::jsonrpc;
@@ -187,6 +212,8 @@ pub mod gen {
         Latest,
         #[serde(rename = "pending")]
         Pending,
+        #[serde(rename = "pre_confirmed")]
+        PreConfirmed,
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -198,6 +225,19 @@ pub mod gen {
         pub block_body_with_receipts: BlockBodyWithReceipts,
     }
 
+    impl TryFrom<GetBlockWithReceiptsResult> for BlockWithReceipts {
+        type Error = eyre::Error;
+        fn try_from(
+            value: GetBlockWithReceiptsResult,
+        ) -> Result<Self, Self::Error> {
+            let GetBlockWithReceiptsResult::BlockWithReceipts(block) = value
+            else {
+                eyre::bail!("Pending block received, which is not supported");
+            };
+            Ok(block)
+        }
+    }
+
     #[derive(Clone, Debug, Deserialize, Serialize)]
     pub struct BlockWithTxHashes {
         pub status: BlockStatus,
@@ -205,6 +245,21 @@ pub mod gen {
         pub block_header: BlockHeader,
         #[serde(flatten)]
         pub block_body_with_tx_hashes: BlockBodyWithTxHashes,
+    }
+
+    impl TryFrom<GetBlockWithTxHashesResult> for BlockWithTxHashes {
+        type Error = eyre::Error;
+        fn try_from(
+            value: GetBlockWithTxHashesResult,
+        ) -> Result<Self, Self::Error> {
+            let GetBlockWithTxHashesResult::BlockWithTxHashes(block) = value
+            else {
+                eyre::bail!(
+                    "Pending state update received, which is not supported"
+                );
+            };
+            Ok(block)
+        }
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -241,7 +296,7 @@ pub mod gen {
         Declare,
     }
 
-    #[derive(Clone, Debug, Deserialize, Serialize)]
+    #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
     pub enum BroadcastedDeclareTxnV1Version {
         #[serde(rename = "0x1")]
         V0x1,
@@ -267,7 +322,7 @@ pub mod gen {
         Declare,
     }
 
-    #[derive(Clone, Debug, Deserialize, Serialize)]
+    #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
     pub enum BroadcastedDeclareTxnV2Version {
         #[serde(rename = "0x2")]
         V0x2,
@@ -298,7 +353,7 @@ pub mod gen {
         Declare,
     }
 
-    #[derive(Clone, Debug, Deserialize, Serialize)]
+    #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
     pub enum BroadcastedDeclareTxnV3Version {
         #[serde(rename = "0x3")]
         V0x3,
@@ -377,7 +432,7 @@ pub mod gen {
     pub struct CommonReceiptProperties {
         pub actual_fee: FeePayment,
         pub events: Vec<Event>,
-        pub execution_resources: ExecutionResources,
+        pub execution_resources: ExecutionResourcesDataAvailability,
         pub finality_status: TxnFinalityStatus,
         pub messages_sent: Vec<MsgToL1>,
         pub transaction_hash: TxnHash,
@@ -414,7 +469,18 @@ pub mod gen {
         #[serde(skip_serializing_if = "Option::is_none")]
         #[serde(default)]
         pub segment_arena_builtin: Option<i64>,
-        pub steps: i64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
+        pub steps: Option<i64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
+        pub l1_data_gas: Option<i64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
+        pub l1_gas: Option<i64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
+        pub l2_gas: Option<i64>,
     }
 
     type ContractAbi = Vec<ContractAbiEntry>;
@@ -520,7 +586,7 @@ pub mod gen {
         Declare,
     }
 
-    #[derive(Clone, Debug, Deserialize, Serialize)]
+    #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
     pub enum DeclareTxnV0Version {
         #[serde(rename = "0x0")]
         V0x0,
@@ -545,7 +611,7 @@ pub mod gen {
         Declare,
     }
 
-    #[derive(Clone, Debug, Deserialize, Serialize)]
+    #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
     pub enum DeclareTxnV1Version {
         #[serde(rename = "0x1")]
         V0x1,
@@ -571,7 +637,7 @@ pub mod gen {
         Declare,
     }
 
-    #[derive(Clone, Debug, Deserialize, Serialize)]
+    #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
     pub enum DeclareTxnV2Version {
         #[serde(rename = "0x2")]
         V0x2,
@@ -602,7 +668,7 @@ pub mod gen {
         Declare,
     }
 
-    #[derive(Clone, Debug, Deserialize, Serialize)]
+    #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
     pub enum DeclareTxnV3Version {
         #[serde(rename = "0x3")]
         V0x3,
@@ -671,7 +737,7 @@ pub mod gen {
         DeployAccount,
     }
 
-    #[derive(Clone, Debug, Deserialize, Serialize)]
+    #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
     pub enum DeployAccountTxnV1Version {
         #[serde(rename = "0x1")]
         V0x1,
@@ -701,7 +767,7 @@ pub mod gen {
         DeployAccount,
     }
 
-    #[derive(Clone, Debug, Deserialize, Serialize)]
+    #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
     pub enum DeployAccountTxnV3Version {
         #[serde(rename = "0x3")]
         V0x3,
@@ -745,6 +811,12 @@ pub mod gen {
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
+    pub struct MigratedCompiledClass {
+        pub class_hash: Felt,
+        pub compiled_class_hash: Felt,
+    }
+
+    #[derive(Clone, Debug, Deserialize, Serialize)]
     pub struct DeprecatedCairoEntryPoint {
         pub offset: NumAsHex,
         pub selector: Felt,
@@ -779,13 +851,13 @@ pub mod gen {
     #[serde(try_from = "String")]
     pub struct DeprecatedContractClassProgram(String);
 
-    mod deprecatedcontractclassprogram {
+    mod deprecated_contract_class_program {
         use super::jsonrpc;
         use super::DeprecatedContractClassProgram;
         use once_cell::sync::Lazy;
         use regex::Regex;
 
-        static DEPRECATEDCONTRACTCLASSPROGRAM_REGEX: Lazy<Regex> = Lazy::new(
+        static DEPRECATED_CONTRACT_CLASS_PROGRAM_REGEX: Lazy<Regex> = Lazy::new(
             || {
                 Regex::new("^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{3}=|[A-Za-z0-9+/]{2}==)?$").expect("DeprecatedContractClassProgram: valid regex")
             },
@@ -793,7 +865,7 @@ pub mod gen {
 
         impl DeprecatedContractClassProgram {
             pub fn try_new(value: &str) -> Result<Self, jsonrpc::Error> {
-                if DEPRECATEDCONTRACTCLASSPROGRAM_REGEX.is_match(value) {
+                if DEPRECATED_CONTRACT_CLASS_PROGRAM_REGEX.is_match(value) {
                     Ok(Self(value.to_string()))
                 } else {
                     Err(jsonrpc::Error {
@@ -820,19 +892,15 @@ pub mod gen {
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
     pub struct EdgeNode {
-        pub edge: EdgeNodeEdge,
+        pub node: EdgeNodeEdge,
+        pub node_hash: Felt,
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
     pub struct EdgeNodeEdge {
         pub child: Felt,
-        pub path: EdgeNodePath,
-    }
-
-    #[derive(Clone, Debug, Deserialize, Serialize)]
-    pub struct EdgeNodePath {
-        pub len: i64,
-        pub value: Felt,
+        pub path: Felt,
+        pub length: i64,
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -965,6 +1033,7 @@ pub mod gen {
     pub struct ExecutionResourcesDataAvailability {
         pub l1_data_gas: i64,
         pub l1_gas: i64,
+        pub l2_gas: i64,
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -975,8 +1044,30 @@ pub mod gen {
         #[serde(skip_serializing_if = "Option::is_none")]
         #[serde(default)]
         pub data_gas_price: Option<Felt>,
-        pub gas_consumed: Felt,
-        pub gas_price: Felt,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
+        pub gas_consumed: Option<Felt>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
+        pub gas_price: Option<Felt>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
+        pub l1_gas_consumed: Option<Felt>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
+        pub l1_gas_price: Option<Felt>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
+        pub l2_gas_consumed: Option<Felt>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
+        pub l2_gas_price: Option<Felt>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
+        pub l1_data_gas_consumed: Option<Felt>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
+        pub l1_data_gas_price: Option<Felt>,
         pub overall_fee: Felt,
         pub unit: PriceUnit,
     }
@@ -987,7 +1078,7 @@ pub mod gen {
         pub unit: PriceUnit,
     }
 
-    #[derive(Clone, Debug, Deserialize, Serialize)]
+    #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
     #[serde(try_from = "String")]
     pub struct Felt(String);
 
@@ -996,11 +1087,14 @@ pub mod gen {
         use super::Felt;
         use once_cell::sync::Lazy;
         use regex::Regex;
+        use std::fmt;
 
         static FELT_REGEX: Lazy<Regex> = Lazy::new(|| {
             Regex::new("^0x(0|[a-fA-F1-9]{1}[a-fA-F0-9]{0,62})$")
                 .expect("Felt: valid regex")
         });
+
+        static ZERO: Lazy<Felt> = Lazy::new(|| Felt(String::from("0x0")));
 
         // The RPC spec regex is not respected anywhere these days,
         // thus such un-elegant workaround is necessary ¯\_(ツ)_/¯
@@ -1013,8 +1107,8 @@ pub mod gen {
                 value.to_owned()
             } else if unprefixed.starts_with("0") {
                 // '0x0...'
-                let unzeroed = unprefixed.trim_start_matches('0');
-                format!("0x{unzeroed}")
+                let normalized = unprefixed.trim_start_matches('0');
+                format!("0x{normalized}")
             } else {
                 value.to_owned()
             }
@@ -1034,6 +1128,10 @@ pub mod gen {
                     })
                 }
             }
+
+            pub fn zero() -> Self {
+                ZERO.clone()
+            }
         }
 
         impl TryFrom<String> for Felt {
@@ -1048,6 +1146,12 @@ pub mod gen {
                 &self.0
             }
         }
+
+        impl fmt::Display for Felt {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                write!(f, "{}", self.0)
+            }
+        }
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -1059,7 +1163,7 @@ pub mod gen {
         #[serde(skip_serializing_if = "Option::is_none")]
         #[serde(default)]
         #[serde(rename = "stateMutability")]
-        pub statemutability: Option<FunctionStateMutability>,
+        pub state_mutability: Option<FunctionStateMutability>,
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -1092,6 +1196,9 @@ pub mod gen {
         pub execution_resources: ComputationResources,
         pub messages: Vec<OrderedMessage>,
         pub result: Vec<Felt>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
+        pub is_reverted: Option<bool>,
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -1167,7 +1274,7 @@ pub mod gen {
         Invoke,
     }
 
-    #[derive(Clone, Debug, Deserialize, Serialize)]
+    #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
     pub enum InvokeTxnV0Version {
         #[serde(rename = "0x0")]
         V0x0,
@@ -1192,7 +1299,7 @@ pub mod gen {
         Invoke,
     }
 
-    #[derive(Clone, Debug, Deserialize, Serialize)]
+    #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
     pub enum InvokeTxnV1Version {
         #[serde(rename = "0x1")]
         V0x1,
@@ -1222,7 +1329,7 @@ pub mod gen {
         Invoke,
     }
 
-    #[derive(Clone, Debug, Deserialize, Serialize)]
+    #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
     pub enum InvokeTxnV3Version {
         #[serde(rename = "0x3")]
         V0x3,
@@ -1330,19 +1437,19 @@ pub mod gen {
     #[serde(try_from = "String")]
     pub struct NumAsHex(String);
 
-    mod numashex {
+    mod num_as_hex {
         use super::jsonrpc;
         use super::NumAsHex;
         use once_cell::sync::Lazy;
         use regex::Regex;
 
-        static NUMASHEX_REGEX: Lazy<Regex> = Lazy::new(|| {
+        static NUM_AS_HEX_REGEX: Lazy<Regex> = Lazy::new(|| {
             Regex::new("^0x[a-fA-F0-9]+$").expect("NumAsHex: valid regex")
         });
 
         impl NumAsHex {
             pub fn try_new(value: &str) -> Result<Self, jsonrpc::Error> {
-                if NUMASHEX_REGEX.is_match(value) {
+                if NUM_AS_HEX_REGEX.is_match(value) {
                     Ok(Self(value.to_string()))
                 } else {
                     Err(jsonrpc::Error {
@@ -1375,7 +1482,7 @@ pub mod gen {
         #[serde(default)]
         pub order: Option<i64>,
         #[serde(flatten)]
-        pub event: Event,
+        pub event: EventContent,
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -1410,7 +1517,7 @@ pub mod gen {
     #[serde(try_from = "i64")]
     pub struct PendingBlockHeaderTimestamp(i64);
 
-    mod pendingblockheadertimestamp {
+    mod pending_block_header_timestamp {
         use super::jsonrpc;
         use super::PendingBlockHeaderTimestamp;
 
@@ -1487,7 +1594,19 @@ pub mod gen {
         Fri,
     }
 
-    type Proof = Vec<Node>;
+    #[derive(Clone, Debug, Deserialize, Serialize)]
+    pub struct ContractLeafData {
+        pub class_hash: Felt,
+        pub nonce: Felt,
+        pub storage_root: Felt,
+    }
+
+    #[derive(Clone, Debug, Deserialize, Serialize)]
+    pub struct ProofData {
+        pub nodes: Vec<Node>,
+        pub contract_leaves_data: Vec<ContractLeafData>,
+    }
+    type Proof = ProofData;
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
     pub struct ReplacedClass {
@@ -1509,12 +1628,19 @@ pub mod gen {
     pub struct ResourceBoundsMapping {
         pub l1_gas: ResourceBounds,
         pub l2_gas: ResourceBounds,
+        pub l1_data_gas: ResourceBounds,
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
     pub struct ResourcePrice {
         pub price_in_fri: Felt,
         pub price_in_wei: Felt,
+    }
+
+    impl Default for ResourcePrice {
+        fn default() -> Self {
+            Self { price_in_fri: Felt::zero(), price_in_wei: Felt::zero() }
+        }
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -1536,7 +1662,7 @@ pub mod gen {
     #[serde(try_from = "i64")]
     pub struct ResultPageRequestChunkSize(i64);
 
-    mod resultpagerequestchunksize {
+    mod result_page_request_chunk_size {
         use super::jsonrpc;
         use super::ResultPageRequestChunkSize;
 
@@ -1604,12 +1730,6 @@ pub mod gen {
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
-    pub enum SimulationFlagForEstimateFee {
-        #[serde(rename = "SKIP_VALIDATE")]
-        SkipValidate,
-    }
-
-    #[derive(Clone, Debug, Deserialize, Serialize)]
     pub struct StateDiff {
         pub declared_classes: Vec<NewClasses>,
         pub deployed_contracts: Vec<DeployedContractItem>,
@@ -1617,6 +1737,9 @@ pub mod gen {
         pub nonces: Vec<NonceUpdate>,
         pub replaced_classes: Vec<ReplacedClass>,
         pub storage_diffs: Vec<ContractStorageDiffItem>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
+        pub migrated_compiled_classes: Option<Vec<MigratedCompiledClass>>,
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -1625,6 +1748,18 @@ pub mod gen {
         pub new_root: Felt,
         pub old_root: Felt,
         pub state_diff: StateDiff,
+    }
+
+    impl TryFrom<GetStateUpdateResult> for StateUpdate {
+        type Error = eyre::Error;
+        fn try_from(value: GetStateUpdateResult) -> Result<Self, Self::Error> {
+            let GetStateUpdateResult::StateUpdate(state_update) = value else {
+                eyre::bail!(
+                    "Pending state update received, which is not supported"
+                );
+            };
+            Ok(state_update)
+        }
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -1693,7 +1828,7 @@ pub mod gen {
     #[serde(try_from = "i64")]
     pub struct StructAbiEntrySize(i64);
 
-    mod structabientrysize {
+    mod struct_abi_entry_size {
         use super::jsonrpc;
         use super::StructAbiEntrySize;
 
@@ -1875,6 +2010,8 @@ pub mod gen {
         AcceptedOnL2,
         #[serde(rename = "ACCEPTED_ON_L1")]
         AcceptedOnL1,
+        #[serde(rename = "PRE_CONFIRMED")]
+        PreConfirmed,
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -2039,7 +2176,7 @@ pub mod gen {
     #[serde(try_from = "i64")]
     pub struct GetTransactionByBlockIdAndIndexIndex(i64);
 
-    mod gettransactionbyblockidandindexindex {
+    mod get_transaction_by_block_id_and_index_index {
         use super::jsonrpc;
         use super::GetTransactionByBlockIdAndIndexIndex;
 
@@ -2096,7 +2233,7 @@ pub mod gen {
     #[serde(try_from = "i64")]
     pub struct GetBlockTransactionCountResult(i64);
 
-    mod getblocktransactioncountresult {
+    mod get_block_transaction_count_result {
         use super::jsonrpc;
         use super::GetBlockTransactionCountResult;
 
@@ -2194,28 +2331,18 @@ pub mod gen {
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
-    pub struct ContractData {
-        pub class_hash: Felt,
-        pub contract_state_hash_version: Felt,
-        pub nonce: Felt,
-        pub root: Felt,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[serde(default)]
-        pub storage_proofs: Option<Vec<Proof>>,
+    pub struct GlobalRoots {
+        pub block_hash: Felt,
+        pub classes_tree_root: Felt,
+        pub contracts_tree_root: Felt,
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
     pub struct GetProofResult {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[serde(default)]
-        pub class_commitment: Option<Felt>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[serde(default)]
-        pub contract_data: Option<ContractData>,
-        pub contract_proof: Proof,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[serde(default)]
-        pub state_commitment: Option<Felt>,
+        pub classes_proof: Vec<Node>,
+        pub contracts_proof: Proof,
+        pub contracts_storage_proofs: Vec<Vec<Node>>,
+        pub global_roots: GlobalRoots,
     }
 
     pub mod error {
@@ -2301,6 +2428,11 @@ pub mod gen {
         /// The version of the pathfinder node hosting this API.
         async fn version(&self) -> std::result::Result<String, jsonrpc::Error>;
 
+        /// Get the state root of the latest block
+        async fn getStateRoot(
+            &self,
+        ) -> std::result::Result<Felt, jsonrpc::Error>;
+
         /// Submit a new class declaration transaction
         async fn addDeclareTransaction(
             &self,
@@ -2347,7 +2479,7 @@ pub mod gen {
         async fn estimateFee(
             &self,
             request: Vec<BroadcastedTxn>,
-            simulation_flags: Vec<SimulationFlagForEstimateFee>,
+            simulation_flags: Vec<SimulationFlag>,
             block_id: BlockId,
         ) -> std::result::Result<Vec<FeeEstimate>, jsonrpc::Error>;
 
@@ -2815,16 +2947,12 @@ pub mod gen {
         params: &Value,
     ) -> jsonrpc::Response {
         #[derive(Deserialize, Serialize)]
-        struct ArgByPos(
-            Vec<BroadcastedTxn>,
-            Vec<SimulationFlagForEstimateFee>,
-            BlockId,
-        );
+        struct ArgByPos(Vec<BroadcastedTxn>, Vec<SimulationFlag>, BlockId);
 
         #[derive(Deserialize, Serialize)]
         struct ArgByName {
             request: Vec<BroadcastedTxn>,
-            simulation_flags: Vec<SimulationFlagForEstimateFee>,
+            simulation_flags: Vec<SimulationFlag>,
             block_id: BlockId,
         }
 
@@ -3637,6 +3765,32 @@ pub mod gen {
         }
     }
 
+    async fn handle_getStateRoot<RPC: Rpc>(
+        rpc: &RPC,
+        _params: &Value,
+    ) -> jsonrpc::Response {
+        match rpc.getStateRoot().await {
+            Ok(ret) => match serde_json::to_value(ret) {
+                Ok(ret) => jsonrpc::Response::result(ret),
+                Err(e) => jsonrpc::Response::error(1003, &format!("{e:?}")),
+            },
+            Err(e) => jsonrpc::Response::error(e.code, &e.message),
+        }
+    }
+
+    fn handle_getStateRoot_blocking<RPC: blocking::Rpc>(
+        rpc: &RPC,
+        _params: &Value,
+    ) -> jsonrpc::Response {
+        match rpc.getStateRoot() {
+            Ok(ret) => match serde_json::to_value(ret) {
+                Ok(ret) => jsonrpc::Response::result(ret),
+                Err(e) => jsonrpc::Response::error(1003, &format!("{e:?}")),
+            },
+            Err(e) => jsonrpc::Response::error(e.code, &e.message),
+        }
+    }
+
     async fn handle_syncing<RPC: Rpc>(
         rpc: &RPC,
         _params: &Value,
@@ -3745,7 +3899,7 @@ pub mod gen {
         let params = &req.params.clone().unwrap_or_default();
 
         let response = match req.method.as_str() {
-            "pathfinder_getProof" => handle_getProof(rpc, params).await,
+            "starknet_getStorageProof" => handle_getProof(rpc, params).await,
             "pathfinder_getTxStatus" => handle_getTxStatus(rpc, params).await,
             "pathfinder_version" => handle_version(rpc, params).await,
             "starknet_addDeclareTransaction" => {
@@ -3806,6 +3960,7 @@ pub mod gen {
                 handle_simulateTransactions(rpc, params).await
             }
             "starknet_specVersion" => handle_specVersion(rpc, params).await,
+            "starknet_getStateRoot" => handle_getStateRoot(rpc, params).await,
             "starknet_syncing" => handle_syncing(rpc, params).await,
             "starknet_traceBlockTransactions" => {
                 handle_traceBlockTransactions(rpc, params).await
@@ -3842,6 +3997,10 @@ pub mod gen {
 
             /// The version of the pathfinder node hosting this API.
             fn version(&self) -> std::result::Result<String, jsonrpc::Error>;
+
+            /// Get the state root of the latest block
+            fn getStateRoot(&self)
+                -> std::result::Result<Felt, jsonrpc::Error>;
 
             /// Submit a new class declaration transaction
             fn addDeclareTransaction(
@@ -3888,7 +4047,7 @@ pub mod gen {
             fn estimateFee(
                 &self,
                 request: Vec<BroadcastedTxn>,
-                simulation_flags: Vec<SimulationFlagForEstimateFee>,
+                simulation_flags: Vec<SimulationFlag>,
                 block_id: BlockId,
             ) -> std::result::Result<Vec<FeeEstimate>, jsonrpc::Error>;
 
@@ -4377,16 +4536,12 @@ pub mod gen {
             params: &Value,
         ) -> jsonrpc::Response {
             #[derive(Deserialize, Serialize)]
-            struct ArgByPos(
-                Vec<BroadcastedTxn>,
-                Vec<SimulationFlagForEstimateFee>,
-                BlockId,
-            );
+            struct ArgByPos(Vec<BroadcastedTxn>, Vec<SimulationFlag>, BlockId);
 
             #[derive(Deserialize, Serialize)]
             struct ArgByName {
                 request: Vec<BroadcastedTxn>,
-                simulation_flags: Vec<SimulationFlagForEstimateFee>,
+                simulation_flags: Vec<SimulationFlag>,
                 block_id: BlockId,
             }
 
@@ -5378,7 +5533,7 @@ pub mod gen {
             let params = &req.params.clone().unwrap_or_default();
 
             let response = match req.method.as_str() {
-                "pathfinder_getProof" => handle_getProof(rpc, params),
+                "starknet_getStorageProof" => handle_getProof(rpc, params),
                 "pathfinder_getTxStatus" => handle_getTxStatus(rpc, params),
                 "pathfinder_version" => handle_version(rpc, params),
                 "starknet_addDeclareTransaction" => {
@@ -5435,6 +5590,9 @@ pub mod gen {
                     handle_simulateTransactions(rpc, params)
                 }
                 "starknet_specVersion" => handle_specVersion(rpc, params),
+                "starknet_getStateRoot" => {
+                    handle_getStateRoot_blocking(rpc, params)
+                }
                 "starknet_syncing" => handle_syncing(rpc, params),
                 "starknet_traceBlockTransactions" => {
                     handle_traceBlockTransactions(rpc, params)
@@ -5507,7 +5665,7 @@ pub mod gen {
                         )
                     })?;
                 let req = jsonrpc::Request::new(
-                    "pathfinder_getProof".to_string(),
+                    "starknet_getStorageProof".to_string(),
                     params,
                 )
                 .with_id(jsonrpc::Id::Number(1));
@@ -5615,6 +5773,46 @@ pub mod gen {
 
                 if let Some(value) = res.result.take() {
                     let ret: String =
+                        serde_json::from_value(value).map_err(|e| {
+                            jsonrpc::Error::new(
+                                5002,
+                                format!("Invalid response object: {e}."),
+                            )
+                        })?;
+
+                    tracing::debug!(result=?ret, "ready");
+
+                    Ok(ret)
+                } else {
+                    tracing::error!("both error and result are missing");
+                    Err(jsonrpc::Error::new(
+                        5003,
+                        "Response missing".to_string(),
+                    ))
+                }
+            }
+
+            async fn getStateRoot(
+                &self,
+            ) -> std::result::Result<Felt, jsonrpc::Error> {
+                let req = jsonrpc::Request::new(
+                    "starknet_getStateRoot".to_string(),
+                    serde_json::Value::Array(vec![]),
+                )
+                .with_id(jsonrpc::Id::Number(1));
+
+                tracing::debug!(request=?req, "processing");
+                let mut res: jsonrpc::Response =
+                    self.http.post(&self.url, &req).await?;
+                tracing::debug!(response=?res, "processing");
+
+                if let Some(err) = res.error.take() {
+                    tracing::error!(error=?err, "failed");
+                    return Err(err);
+                }
+
+                if let Some(value) = res.result.take() {
+                    let ret: Felt =
                         serde_json::from_value(value).map_err(|e| {
                             jsonrpc::Error::new(
                                 5002,
@@ -5962,7 +6160,7 @@ pub mod gen {
             async fn estimateFee(
                 &self,
                 request: Vec<BroadcastedTxn>,
-                simulation_flags: Vec<SimulationFlagForEstimateFee>,
+                simulation_flags: Vec<SimulationFlag>,
                 block_id: BlockId,
             ) -> std::result::Result<Vec<FeeEstimate>, jsonrpc::Error>
             {
@@ -6121,7 +6319,7 @@ pub mod gen {
                 block_id: BlockId,
             ) -> std::result::Result<GetBlockWithReceiptsResult, jsonrpc::Error>
             {
-                let args = (block_id,);
+                let args = (block_id.clone(),);
 
                 let params: serde_json::Value = serde_json::to_value(args)
                     .map_err(|e| {
@@ -6142,7 +6340,7 @@ pub mod gen {
                 tracing::debug!(response=?res, "processing");
 
                 if let Some(err) = res.error.take() {
-                    tracing::error!(error=?err, "failed");
+                    tracing::error!(block_id=?block_id, error=?err, "Failed to get block with receipts");
                     return Err(err);
                 }
 
@@ -7113,17 +7311,30 @@ pub mod gen {
                     keys: Vec<StorageKey>,
                 ) -> std::result::Result<GetProofResult, jsonrpc::Error>
                 {
-                    let args = (block_id, contract_address, keys);
+                    // Convert storage keys to strings
+                    let storage_keys: Vec<String> =
+                        keys.into_iter().map(|key| key.0).collect();
 
-                    let params: serde_json::Value = serde_json::to_value(args)
-                        .map_err(|e| {
-                            jsonrpc::Error::new(
-                                4001,
-                                format!("Invalid params: {e}."),
-                            )
-                        })?;
+                    // Create the new args structure
+                    let args = serde_json::json!([
+                        block_id,
+                        [
+                            // class hash
+                        ],
+                        [
+                            contract_address.0.0
+                        ],
+                        [
+                            {
+                                "contract_address": contract_address.0.0,
+                                "storage_keys": storage_keys
+                            }
+                        ]
+                    ]);
+
+                    let params: serde_json::Value = args;
                     let req = jsonrpc::Request::new(
-                        "pathfinder_getProof".to_string(),
+                        "starknet_getStorageProof".to_string(),
                         params,
                     )
                     .with_id(jsonrpc::Id::Number(1));
@@ -7233,6 +7444,46 @@ pub mod gen {
                     if let Some(value) = res.result.take() {
                         let ret: String = serde_json::from_value(value)
                             .map_err(|e| {
+                                jsonrpc::Error::new(
+                                    5002,
+                                    format!("Invalid response object: {e}."),
+                                )
+                            })?;
+
+                        tracing::debug!(result=?ret, "ready");
+
+                        Ok(ret)
+                    } else {
+                        tracing::error!("both error and result are missing");
+                        Err(jsonrpc::Error::new(
+                            5003,
+                            "Response missing".to_string(),
+                        ))
+                    }
+                }
+
+                fn getStateRoot(
+                    &self,
+                ) -> std::result::Result<Felt, jsonrpc::Error> {
+                    let req = jsonrpc::Request::new(
+                        "starknet_getStateRoot".to_string(),
+                        serde_json::Value::Array(vec![]),
+                    )
+                    .with_id(jsonrpc::Id::Number(1));
+
+                    tracing::debug!(request=?req, "processing");
+                    let mut res: jsonrpc::Response =
+                        self.http.post(&self.url, &req)?;
+                    tracing::debug!(response=?res, "processing");
+
+                    if let Some(err) = res.error.take() {
+                        tracing::error!(error=?err, "failed");
+                        return Err(err);
+                    }
+
+                    if let Some(value) = res.result.take() {
+                        let ret: Felt =
+                            serde_json::from_value(value).map_err(|e| {
                                 jsonrpc::Error::new(
                                     5002,
                                     format!("Invalid response object: {e}."),
@@ -7588,7 +7839,7 @@ pub mod gen {
                 fn estimateFee(
                     &self,
                     request: Vec<BroadcastedTxn>,
-                    simulation_flags: Vec<SimulationFlagForEstimateFee>,
+                    simulation_flags: Vec<SimulationFlag>,
                     block_id: BlockId,
                 ) -> std::result::Result<Vec<FeeEstimate>, jsonrpc::Error>
                 {
@@ -8716,3 +8967,1192 @@ pub mod gen {
     }
 }
 // ^^^ GENERATED CODE ABOVE ^^^
+
+// Implementation for converting Felt to GasPrice
+impl TryFrom<Felt> for starknet_api::block::GasPrice {
+    type Error = crate::exe::err::Error;
+    fn try_from(felt: Felt) -> Result<Self, Self::Error> {
+        let trimmed = felt.as_ref().trim_start_matches("0x");
+        Ok(starknet_api::block::GasPrice::from(u128::from_str_radix(
+            trimmed, 16,
+        )?))
+    }
+}
+
+// Implementation for converting BlockHeader to starknet_api::BlockHeaderWithoutHash
+impl TryFrom<BlockHeader> for starknet_api::block::BlockHeaderWithoutHash {
+    type Error = crate::exe::err::Error;
+    fn try_from(header: BlockHeader) -> Result<Self, Self::Error> {
+        use starknet_api::{
+            block::{BlockNumber, BlockTimestamp, GasPricePerToken},
+            core::{GlobalRoot, SequencerContractAddress},
+            data_availability::L1DataAvailabilityMode,
+            hash::StarkHash,
+        };
+        use starknet_types_core::felt::Felt as StarkFelt;
+
+        // Convert l1_da_mode
+        let l1_da_mode = match header.l1_da_mode {
+            Some(gen::BlockHeaderL1DaMode::Calldata) => {
+                L1DataAvailabilityMode::Calldata
+            }
+            Some(gen::BlockHeaderL1DaMode::Blob) => {
+                L1DataAvailabilityMode::Blob
+            }
+            None => L1DataAvailabilityMode::default(), // Default to Calldata
+        };
+
+        // Convert starknet_version from String to StarknetVersion
+        let starknet_version = starknet_api::block::StarknetVersion::try_from(
+            header.starknet_version,
+        )
+        .unwrap_or_default();
+
+        // Convert gas prices
+        let l1_gas_price = GasPricePerToken {
+            price_in_fri: header
+                .l1_gas_price
+                .price_in_fri
+                .clone()
+                .try_into()?,
+            price_in_wei: header
+                .l1_gas_price
+                .price_in_wei
+                .clone()
+                .try_into()?,
+        };
+
+        let l1_data_gas_price = GasPricePerToken {
+            price_in_fri: header
+                .l1_data_gas_price
+                .clone()
+                .unwrap_or(ResourcePrice {
+                    price_in_fri: Felt::try_new("0x0")?,
+                    price_in_wei: Felt::try_new("0x0")?,
+                })
+                .price_in_fri
+                .try_into()?,
+            price_in_wei: header
+                .l1_data_gas_price
+                .clone()
+                .unwrap_or(ResourcePrice {
+                    price_in_fri: Felt::try_new("0x0")?,
+                    price_in_wei: Felt::try_new("0x0")?,
+                })
+                .price_in_wei
+                .try_into()?,
+        };
+
+        let l2_gas_price = GasPricePerToken {
+            price_in_fri: header.l2_gas_price.price_in_fri.try_into()?,
+            price_in_wei: header.l2_gas_price.price_in_wei.try_into()?,
+        };
+
+        // NOTE: those fields are not used in hash calculation so we skip them
+        let l2_gas_consumed = GasAmount::ZERO;
+        let next_l2_gas_price = GasPrice(0);
+
+        Ok(Self {
+            parent_hash: starknet_api::block::BlockHash(
+                StarkFelt::from_hex_unchecked(header.parent_hash.0.as_ref()),
+            ),
+            block_number: BlockNumber(*header.block_number.as_ref() as u64),
+            l1_gas_price,
+            l1_data_gas_price,
+            l2_gas_price,
+            l2_gas_consumed,
+            next_l2_gas_price,
+            state_root: GlobalRoot(StarkHash::from(
+                StarkFelt::from_hex_unchecked(header.new_root.as_ref()),
+            )),
+            sequencer: SequencerContractAddress(
+                starknet_api::core::ContractAddress::try_from(
+                    StarkFelt::from_hex_unchecked(
+                        header.sequencer_address.as_ref(),
+                    ),
+                )?,
+            ),
+            timestamp: BlockTimestamp(*header.timestamp.as_ref() as u64),
+            l1_da_mode,
+            starknet_version,
+        })
+    }
+}
+
+// Implementation for converting StateDiff to starknet_api::StateDiff
+impl TryFrom<StateDiff> for starknet_api::state::ThinStateDiff {
+    type Error = crate::exe::err::Error;
+    fn try_from(state_diff: StateDiff) -> Result<Self, Self::Error> {
+        use indexmap::IndexMap;
+        use starknet_api::{
+            core::{
+                ClassHash, CompiledClassHash, ContractAddress, Nonce,
+                PatriciaKey,
+            },
+            deprecated_contract_class::ContractClass as DeprecatedContractClass,
+            hash::StarkHash,
+            state::{
+                SierraContractClass, StateDiff, StorageKey, ThinStateDiff,
+            },
+        };
+        use starknet_types_core::felt::Felt as StarkFelt;
+
+        let declared_classes = state_diff
+            .declared_classes
+            .into_iter()
+            .map(|class| {
+                Ok((
+                    ClassHash(StarkFelt::from_hex_unchecked(
+                        class
+                            .class_hash
+                            .as_ref()
+                            .ok_or(crate::exe::err::Error::Custom(
+                                "Class hash is missing",
+                            ))?
+                            .as_ref(),
+                    )),
+                    (
+                        CompiledClassHash(StarkFelt::from_hex_unchecked(
+                            class
+                                .compiled_class_hash
+                                .as_ref()
+                                .ok_or(crate::exe::err::Error::Custom(
+                                    "Compiled class hash is missing",
+                                ))?
+                                .as_ref(),
+                        )),
+                        SierraContractClass::default(),
+                    ),
+                ))
+            })
+            .collect::<Result<
+                IndexMap<ClassHash, (CompiledClassHash, SierraContractClass)>,
+                crate::exe::err::Error,
+            >>()?;
+        let deployed_contracts = state_diff
+            .deployed_contracts
+            .into_iter()
+            .map(|contract| {
+                Ok((
+                    ContractAddress::try_from(StarkHash::from_hex_unchecked(
+                        contract.address.as_ref(),
+                    ))?,
+                    ClassHash(StarkHash::from_hex_unchecked(
+                        contract.class_hash.as_ref(),
+                    )),
+                ))
+            })
+            .collect::<Result<
+                IndexMap<ContractAddress, ClassHash>,
+                crate::exe::err::Error,
+            >>()?;
+        let deprecated_declared_classes = state_diff
+            .deprecated_declared_classes
+            .into_iter()
+            .map(|class| {
+                (
+                    ClassHash(StarkHash::from_hex_unchecked(class.as_ref())),
+                    DeprecatedContractClass::default(),
+                )
+            })
+            .collect::<IndexMap<ClassHash, DeprecatedContractClass>>();
+        let nonces =
+            state_diff
+                .nonces
+                .into_iter()
+                .map(|nonce| {
+                    Ok((
+                        ContractAddress::try_from(
+                            StarkHash::from_hex_unchecked(
+                                nonce
+                                    .contract_address
+                                    .ok_or(crate::exe::err::Error::Custom(
+                                        "Contract address is missing",
+                                    ))?
+                                    .0
+                                    .as_ref(),
+                            ),
+                        )?,
+                        Nonce(StarkHash::from_hex_unchecked(
+                            nonce.nonce.unwrap_or(Felt::zero()).as_ref(),
+                        )),
+                    ))
+                })
+                .collect::<Result<
+                    IndexMap<ContractAddress, Nonce>,
+                    crate::exe::err::Error,
+                >>()?;
+        let replaced_classes = state_diff
+            .replaced_classes
+            .into_iter()
+            .map(|class| {
+                Ok((
+                    ContractAddress::try_from(StarkHash::from_hex_unchecked(
+                        class
+                            .contract_address
+                            .ok_or(crate::exe::err::Error::Custom(
+                                "Contract address is missing",
+                            ))?
+                            .0
+                            .as_ref(),
+                    ))?,
+                    ClassHash(StarkHash::from_hex_unchecked(
+                        class
+                            .class_hash
+                            .ok_or(crate::exe::err::Error::Custom(
+                                "Class hash is missing",
+                            ))?
+                            .as_ref(),
+                    )),
+                ))
+            })
+            .collect::<Result<
+                IndexMap<ContractAddress, ClassHash>,
+                crate::exe::err::Error,
+            >>()?;
+        let storage_diffs = state_diff
+            .storage_diffs
+            .into_iter()
+            .map(|diff| {
+                Ok((
+                    ContractAddress::try_from(StarkHash::from_hex_unchecked(
+                        diff.address.as_ref(),
+                    ))?,
+                    diff.storage_entries
+                        .into_iter()
+                        .map(|entry| {
+                            Ok((
+                                StorageKey(PatriciaKey::from_hex_unchecked(
+                                    entry
+                                        .key
+                                        .ok_or(crate::exe::err::Error::Custom(
+                                            "Storage key is missing",
+                                        ))?
+                                        .as_ref(),
+                                )),
+                                StarkHash::from_hex_unchecked(
+                                    entry
+                                        .value
+                                        .ok_or(crate::exe::err::Error::Custom(
+                                            "Storage value is missing",
+                                        ))?
+                                        .as_ref(),
+                                ),
+                            ))
+                        })
+                        .collect::<Result<
+                            IndexMap<StorageKey, StarkHash>,
+                            crate::exe::err::Error,
+                        >>()?,
+                ))
+            })
+            .collect::<Result<
+                IndexMap<ContractAddress, IndexMap<StorageKey, StarkHash>>,
+                crate::exe::err::Error,
+            >>()?;
+        let migrated_compiled_classes = if let Some(migrated_compiled_classes) =
+            state_diff.migrated_compiled_classes
+        {
+            migrated_compiled_classes
+                .into_iter()
+                .map(|item| {
+                    Ok((
+                        ClassHash(StarkFelt::from_hex_unchecked(
+                            item.class_hash.as_ref(),
+                        )),
+                        CompiledClassHash(StarkFelt::from_hex_unchecked(
+                            item.compiled_class_hash.as_ref(),
+                        )),
+                    ))
+                })
+                .collect::<Result<
+                    IndexMap<ClassHash, CompiledClassHash>,
+                    crate::exe::err::Error,
+                >>()?
+        } else {
+            IndexMap::new()
+        };
+        let all_deployed_contracts = deployed_contracts
+            .into_iter()
+            .chain(replaced_classes)
+            .collect::<IndexMap<ContractAddress, ClassHash>>();
+        let state_diff = StateDiff {
+            declared_classes,
+            deployed_contracts: all_deployed_contracts,
+            deprecated_declared_classes,
+            nonces,
+            storage_diffs,
+            migrated_compiled_classes,
+        };
+        Ok(ThinStateDiff::from(state_diff))
+    }
+}
+
+// Implementation for converting TransactionAndReceipt to starknet_api::block_hash::TransactionHashingData
+impl TryFrom<TransactionAndReceipt>
+    for starknet_api::block_hash::block_hash_calculator::TransactionHashingData
+{
+    type Error = crate::exe::err::Error;
+    fn try_from(
+        transaction_and_receipt: TransactionAndReceipt,
+    ) -> Result<Self, Self::Error> {
+        use starknet_api::{
+            block_hash::block_hash_calculator::TransactionOutputForHash,
+            core::{ContractAddress, EthAddress},
+            execution_resources::{GasAmount, GasVector},
+            hash::StarkHash,
+            transaction::{
+                fields::{Fee, TransactionSignature},
+                Event, EventContent, EventData, EventKey, L2ToL1Payload,
+                MessageToL1, RevertedTransactionExecutionStatus,
+                TransactionExecutionStatus, TransactionHash,
+            },
+        };
+        use std::sync::Arc;
+
+        let signature: Vec<Felt> = match transaction_and_receipt.transaction {
+            Txn::InvokeTxn(invoke_txn) => match invoke_txn {
+                InvokeTxn::InvokeTxnV0(invoke_txn_v0) => {
+                    invoke_txn_v0.signature
+                }
+                InvokeTxn::InvokeTxnV1(invoke_txn_v1) => {
+                    invoke_txn_v1.signature
+                }
+                InvokeTxn::InvokeTxnV3(invoke_txn_v3) => {
+                    invoke_txn_v3.signature
+                }
+            },
+            Txn::L1HandlerTxn(_l1_handler_txn) => vec![],
+            Txn::DeclareTxn(declare_txn) => match declare_txn {
+                DeclareTxn::DeclareTxnV0(declare_txn_v0) => {
+                    declare_txn_v0.signature
+                }
+                DeclareTxn::DeclareTxnV1(declare_txn_v1) => {
+                    declare_txn_v1.signature
+                }
+                DeclareTxn::DeclareTxnV2(declare_txn_v2) => {
+                    declare_txn_v2.signature
+                }
+                DeclareTxn::DeclareTxnV3(declare_txn_v3) => {
+                    declare_txn_v3.signature
+                }
+            },
+            Txn::DeployTxn(_deploy_txn) => vec![],
+            Txn::DeployAccountTxn(deploy_account_txn) => {
+                match deploy_account_txn {
+                    DeployAccountTxn::DeployAccountTxnV1(
+                        deploy_account_txn_v1,
+                    ) => deploy_account_txn_v1.signature,
+                    DeployAccountTxn::DeployAccountTxnV3(
+                        deploy_account_txn_v3,
+                    ) => deploy_account_txn_v3.signature,
+                }
+            }
+        };
+
+        let common_receipt_properties: CommonReceiptProperties =
+            match transaction_and_receipt.receipt {
+                TxnReceipt::InvokeTxnReceipt(invoke_txn_receipt) => {
+                    invoke_txn_receipt.common_receipt_properties
+                }
+                TxnReceipt::L1HandlerTxnReceipt(l1_handler_txn_receipt) => {
+                    l1_handler_txn_receipt.common_receipt_properties
+                }
+                TxnReceipt::DeclareTxnReceipt(declare_txn_receipt) => {
+                    declare_txn_receipt.common_receipt_properties
+                }
+                TxnReceipt::DeployTxnReceipt(deploy_txn_receipt) => {
+                    deploy_txn_receipt.common_receipt_properties
+                }
+                TxnReceipt::DeployAccountTxnReceipt(
+                    deploy_account_txn_receipt,
+                ) => deploy_account_txn_receipt.common_receipt_properties,
+            };
+
+        let execution_status: TransactionExecutionStatus = match common_receipt_properties.result_common_receipt_properties {
+            ResultCommonReceiptProperties::SuccessfulCommonReceiptProperties(_) => TransactionExecutionStatus::Succeeded,
+            ResultCommonReceiptProperties::RevertedCommonReceiptProperties(reverted_common_receipt_properties) =>
+                TransactionExecutionStatus::Reverted(RevertedTransactionExecutionStatus{revert_reason: reverted_common_receipt_properties.revert_reason}),
+        };
+
+        let transaction_output = TransactionOutputForHash {
+            actual_fee: Fee(u128::from_str_radix(
+                common_receipt_properties
+                    .actual_fee
+                    .amount
+                    .as_ref()
+                    .trim_start_matches("0x"),
+                16,
+            )?),
+            events: common_receipt_properties
+                .events
+                .into_iter()
+                .map(|event| {
+                    Ok(Event {
+                        from_address: ContractAddress::try_from(
+                            StarkHash::from_hex_unchecked(
+                                event.from_address.0.as_ref(),
+                            ),
+                        )?,
+                        content: EventContent {
+                            data: EventData(
+                                event
+                                    .event_content
+                                    .data
+                                    .into_iter()
+                                    .map(|data_item| {
+                                        StarkHash::from_hex_unchecked(
+                                            data_item.as_ref(),
+                                        )
+                                    })
+                                    .collect::<Vec<StarkHash>>(),
+                            ),
+                            keys: event
+                                .event_content
+                                .keys
+                                .into_iter()
+                                .map(|key_item| {
+                                    EventKey(StarkHash::from_hex_unchecked(
+                                        key_item.as_ref(),
+                                    ))
+                                })
+                                .collect::<Vec<EventKey>>(),
+                        },
+                    })
+                })
+                .collect::<Result<Vec<Event>, crate::exe::err::Error>>()?,
+            execution_status,
+            gas_consumed: GasVector {
+                l1_gas: GasAmount(
+                    common_receipt_properties.execution_resources.l1_gas as u64,
+                ),
+                l1_data_gas: GasAmount(
+                    common_receipt_properties.execution_resources.l1_data_gas
+                        as u64,
+                ),
+                l2_gas: GasAmount(
+                    common_receipt_properties.execution_resources.l2_gas as u64,
+                ),
+            },
+            messages_sent: common_receipt_properties
+                .messages_sent
+                .into_iter()
+                .map(|msg| {
+                    Ok(MessageToL1 {
+                        from_address: ContractAddress::try_from(
+                            StarkHash::from_hex_unchecked(
+                                msg.from_address.as_ref(),
+                            ),
+                        )?,
+                        to_address: EthAddress::try_from(
+                            StarkHash::from_hex_unchecked(
+                                msg.to_address.as_ref(),
+                            ),
+                        )?,
+                        payload: L2ToL1Payload(
+                            msg.payload
+                                .into_iter()
+                                .map(|payload_item| {
+                                    StarkHash::from_hex_unchecked(
+                                        payload_item.as_ref(),
+                                    )
+                                })
+                                .collect::<Vec<StarkHash>>(),
+                        ),
+                    })
+                })
+                .collect::<Result<Vec<MessageToL1>, crate::exe::err::Error>>(
+                )?,
+        };
+
+        Ok(Self {
+            transaction_signature: TransactionSignature(Arc::new(
+                signature
+                    .into_iter()
+                    .map(|signature_item| {
+                        StarkHash::from_hex_unchecked(signature_item.as_ref())
+                    })
+                    .collect::<Vec<StarkHash>>(),
+            )),
+            transaction_output,
+            transaction_hash: TransactionHash(StarkHash::from_hex_unchecked(
+                common_receipt_properties.transaction_hash.0.as_ref(),
+            )),
+        })
+    }
+}
+
+impl From<Felt> for starknet_api::block::NonzeroGasPrice {
+    fn from(gas_price: Felt) -> Self {
+        starknet_api::block::NonzeroGasPrice::new(
+            gas_price.try_into().unwrap_or_default(),
+        )
+        .unwrap_or(starknet_api::block::NonzeroGasPrice::MIN)
+    }
+}
+
+// Helper function to convert Felt to u128
+fn felt_to_u128(felt: Felt) -> Result<u128, crate::exe::err::Error> {
+    let trimmed = felt.as_ref().trim_start_matches("0x");
+    Ok(u128::from_str_radix(trimmed, 16)?)
+}
+
+// Helper function to convert U64 to u64
+fn u64_to_u64(val: U64) -> Result<u64, crate::exe::err::Error> {
+    let trimmed = val.as_ref().trim_start_matches("0x");
+    Ok(u64::from_str_radix(trimmed, 16)?)
+}
+
+// Helper function to convert U128 to u128
+fn u128_to_u128(val: U128) -> Result<u128, crate::exe::err::Error> {
+    let trimmed = val.as_ref().trim_start_matches("0x");
+    Ok(u128::from_str_radix(trimmed, 16)?)
+}
+
+impl TryFrom<BroadcastedTxn> for ExecutableTransactionInput {
+    type Error = crate::exe::err::Error;
+    fn try_from(tx: BroadcastedTxn) -> Result<Self, Self::Error> {
+        use crate::exe::map;
+        use starknet_api::{
+            contract_class::SierraVersion,
+            core::{
+                ClassHash, CompiledClassHash, ContractAddress,
+                EntryPointSelector, Nonce,
+            },
+            hash::StarkHash,
+            transaction::{
+                fields::{
+                    AccountDeploymentData, AllResourceBounds, Calldata,
+                    ContractAddressSalt, Fee, PaymasterData, ResourceBounds,
+                    Tip, TransactionSignature, ValidResourceBounds,
+                },
+                DeclareTransactionV0V1, DeclareTransactionV2,
+                DeclareTransactionV3, DeployAccountTransaction,
+                DeployAccountTransactionV1, DeployAccountTransactionV3,
+                InvokeTransaction, InvokeTransactionV0, InvokeTransactionV1,
+                InvokeTransactionV3,
+            },
+        };
+        use starknet_types_core::felt::Felt as StarkFelt;
+        use std::sync::Arc;
+
+        match tx {
+            BroadcastedTxn::BroadcastedInvokeTxn(invoke_txn) => {
+                match invoke_txn.0 {
+                    InvokeTxn::InvokeTxnV0(v0) => {
+                        let max_fee = Fee(felt_to_u128(v0.max_fee)?);
+                        let signature = TransactionSignature(Arc::new(
+                            v0.signature
+                                .into_iter()
+                                .map(StarkFelt::try_from)
+                                .collect::<Result<Vec<_>, _>>()?,
+                        ));
+                        let contract_address = ContractAddress::try_from(
+                            StarkHash::from_hex_unchecked(
+                                v0.contract_address.0.as_ref(),
+                            ),
+                        )?;
+                        let entry_point_selector =
+                            EntryPointSelector(StarkHash::from_hex_unchecked(
+                                v0.entry_point_selector.as_ref(),
+                            ));
+                        let calldata = Calldata(Arc::new(
+                            v0.calldata
+                                .into_iter()
+                                .map(StarkFelt::try_from)
+                                .collect::<Result<Vec<_>, _>>()?,
+                        ));
+
+                        let tx = InvokeTransactionV0 {
+                            max_fee,
+                            signature,
+                            contract_address,
+                            entry_point_selector,
+                            calldata,
+                        };
+
+                        let only_query = v0.version == InvokeTxnV0Version::V0x0;
+
+                        Ok(ExecutableTransactionInput::Invoke(
+                            InvokeTransaction::V0(tx),
+                            only_query,
+                        ))
+                    }
+                    InvokeTxn::InvokeTxnV1(v1) => {
+                        let max_fee = Fee(felt_to_u128(v1.max_fee)?);
+                        let signature = TransactionSignature(Arc::new(
+                            v1.signature
+                                .into_iter()
+                                .map(StarkFelt::try_from)
+                                .collect::<Result<Vec<_>, _>>()?,
+                        ));
+                        let nonce = Nonce(StarkFelt::try_from(v1.nonce)?);
+                        let sender_address = ContractAddress::try_from(
+                            StarkHash::from_hex_unchecked(
+                                v1.sender_address.0.as_ref(),
+                            ),
+                        )?;
+                        let calldata = Calldata(Arc::new(
+                            v1.calldata
+                                .into_iter()
+                                .map(StarkFelt::try_from)
+                                .collect::<Result<Vec<_>, _>>()?,
+                        ));
+
+                        let tx = InvokeTransactionV1 {
+                            max_fee,
+                            signature,
+                            nonce,
+                            sender_address,
+                            calldata,
+                        };
+
+                        let only_query = v1.version == InvokeTxnV1Version::V0x100000000000000000000000000000001;
+
+                        Ok(ExecutableTransactionInput::Invoke(
+                            InvokeTransaction::V1(tx),
+                            only_query,
+                        ))
+                    }
+                    InvokeTxn::InvokeTxnV3(v3) => {
+                        let signature = TransactionSignature(Arc::new(
+                            v3.signature
+                                .into_iter()
+                                .map(StarkFelt::try_from)
+                                .collect::<Result<Vec<_>, _>>()?,
+                        ));
+                        let nonce = Nonce(StarkFelt::try_from(v3.nonce)?);
+                        let sender_address = ContractAddress::try_from(
+                            StarkHash::from_hex_unchecked(
+                                v3.sender_address.0.as_ref(),
+                            ),
+                        )?;
+                        let calldata = Calldata(Arc::new(
+                            v3.calldata
+                                .into_iter()
+                                .map(StarkFelt::try_from)
+                                .collect::<Result<Vec<_>, _>>()?,
+                        ));
+
+                        // Convert resource bounds
+                        let resource_bounds = ValidResourceBounds::AllResources(
+                            AllResourceBounds {
+                                l1_gas: ResourceBounds {
+                                    max_amount: u64_to_u64(
+                                        v3.resource_bounds.l1_gas.max_amount,
+                                    )?
+                                    .into(),
+                                    max_price_per_unit: u128_to_u128(
+                                        v3.resource_bounds
+                                            .l1_gas
+                                            .max_price_per_unit,
+                                    )?
+                                    .into(),
+                                },
+                                l2_gas: ResourceBounds {
+                                    max_amount: u64_to_u64(
+                                        v3.resource_bounds.l2_gas.max_amount,
+                                    )?
+                                    .into(),
+                                    max_price_per_unit: u128_to_u128(
+                                        v3.resource_bounds
+                                            .l2_gas
+                                            .max_price_per_unit,
+                                    )?
+                                    .into(),
+                                },
+                                l1_data_gas: ResourceBounds {
+                                    max_amount: u64_to_u64(
+                                        v3.resource_bounds
+                                            .l1_data_gas
+                                            .max_amount,
+                                    )?
+                                    .into(),
+                                    max_price_per_unit: u128_to_u128(
+                                        v3.resource_bounds
+                                            .l1_data_gas
+                                            .max_price_per_unit,
+                                    )?
+                                    .into(),
+                                },
+                            },
+                        );
+
+                        let tip = Tip(u64_to_u64(v3.tip)?);
+
+                        let paymaster_data = PaymasterData(
+                            v3.paymaster_data
+                                .into_iter()
+                                .map(StarkFelt::try_from)
+                                .collect::<Result<Vec<_>, _>>()?,
+                        );
+
+                        let account_deployment_data = AccountDeploymentData(
+                            v3.account_deployment_data
+                                .into_iter()
+                                .map(StarkFelt::try_from)
+                                .collect::<Result<Vec<_>, _>>()?,
+                        );
+
+                        let tx = InvokeTransactionV3 {
+                            resource_bounds,
+                            tip,
+                            signature,
+                            nonce,
+                            sender_address,
+                            calldata,
+                            nonce_data_availability_mode: match v3.nonce_data_availability_mode {
+                                DaMode::L1 => starknet_api::data_availability::DataAvailabilityMode::L1,
+                                DaMode::L2 => starknet_api::data_availability::DataAvailabilityMode::L2,
+                            },
+                            fee_data_availability_mode: match v3.fee_data_availability_mode {
+                                DaMode::L1 => starknet_api::data_availability::DataAvailabilityMode::L1,
+                                DaMode::L2 => starknet_api::data_availability::DataAvailabilityMode::L2,
+                            },
+                            paymaster_data,
+                            account_deployment_data,
+                        };
+                        let only_query = v3.version == InvokeTxnV3Version::V0x100000000000000000000000000000003;
+
+                        Ok(ExecutableTransactionInput::Invoke(
+                            InvokeTransaction::V3(tx),
+                            only_query,
+                        ))
+                    }
+                }
+            }
+            BroadcastedTxn::BroadcastedDeclareTxn(declare_txn) => {
+                match declare_txn {
+                    BroadcastedDeclareTxn::BroadcastedDeclareTxnV1(v1) => {
+                        // Convert to DeclareTransactionV0V1
+                        let class_hash = ClassHash(StarkHash::ZERO); // Will be computed by blockifier
+                        let max_fee = Fee(felt_to_u128(v1.max_fee)?);
+                        let nonce = Nonce(StarkFelt::try_from(v1.nonce)?);
+                        let sender_address = ContractAddress::try_from(
+                            StarkHash::from_hex_unchecked(
+                                v1.sender_address.0.as_ref(),
+                            ),
+                        )?;
+                        let signature = TransactionSignature(Arc::new(
+                            v1.signature
+                                .into_iter()
+                                .map(StarkFelt::try_from)
+                                .collect::<Result<Vec<_>, _>>()?,
+                        ));
+
+                        let tx = DeclareTransactionV0V1 {
+                            max_fee,
+                            signature,
+                            nonce,
+                            class_hash,
+                            sender_address,
+                        };
+
+                        // Convert contract class
+                        let deprecated_class =
+                            map::convert_deprecated_contract_class(
+                                v1.contract_class,
+                            )?;
+
+                        // Calculate ABI length
+                        let abi_length = deprecated_class
+                            .abi
+                            .as_ref()
+                            .map_or(0, |abi| abi.len());
+
+                        let only_query = v1.version == BroadcastedDeclareTxnV1Version::V0x100000000000000000000000000000001;
+
+                        Ok(ExecutableTransactionInput::DeclareV1(
+                            tx,
+                            deprecated_class,
+                            abi_length,
+                            only_query,
+                        ))
+                    }
+                    BroadcastedDeclareTxn::BroadcastedDeclareTxnV2(v2) => {
+                        // Convert to DeclareTransactionV2
+                        let class_hash = ClassHash(StarkHash::ZERO); // Will be computed by blockifier
+                        let compiled_class_hash =
+                            CompiledClassHash(StarkHash::from_hex_unchecked(
+                                v2.compiled_class_hash.as_ref(),
+                            ));
+                        let max_fee = Fee(felt_to_u128(v2.max_fee)?);
+                        let nonce = Nonce(StarkFelt::try_from(v2.nonce)?);
+                        let sender_address = ContractAddress::try_from(
+                            StarkHash::from_hex_unchecked(
+                                v2.sender_address.0.as_ref(),
+                            ),
+                        )?;
+                        let signature = TransactionSignature(Arc::new(
+                            v2.signature
+                                .into_iter()
+                                .map(StarkFelt::try_from)
+                                .collect::<Result<Vec<_>, _>>()?,
+                        ));
+
+                        let tx = DeclareTransactionV2 {
+                            max_fee,
+                            signature,
+                            nonce,
+                            class_hash,
+                            compiled_class_hash,
+                            sender_address,
+                        };
+
+                        // Convert contract class using TryFrom from convert module
+                        use crate::convert::ToCairo;
+                        let cairo_class = v2.contract_class.to_cairo()?;
+
+                        // Compile to CASM
+                        let casm_contract_class = cairo_lang_starknet_classes::casm_contract_class::CasmContractClass::from_contract_class(
+                            cairo_class.clone(),
+                            false,
+                            usize::MAX,
+                        )?;
+
+                        // Calculate sierra program length and ABI length from the cairo class
+                        let sierra_program_length =
+                            cairo_class.sierra_program.len();
+                        let abi_length = match &cairo_class.abi {
+                            Some(abi) => {
+                                // Serialize ABI to JSON and count items
+                                let abi_json = serde_json::to_value(abi)
+                                    .unwrap_or(serde_json::Value::Array(
+                                        vec![],
+                                    ));
+                                match abi_json {
+                                    serde_json::Value::Array(items) => {
+                                        items.len()
+                                    }
+                                    _ => 0,
+                                }
+                            }
+                            None => 0,
+                        };
+
+                        // Parse sierra version from string (format: "0.1.0")
+                        let version_parts: Vec<&str> = cairo_class
+                            .contract_class_version
+                            .split('.')
+                            .collect();
+                        let sierra_version = SierraVersion::new(
+                            version_parts
+                                .first()
+                                .and_then(|v| v.parse().ok())
+                                .unwrap_or(0),
+                            version_parts
+                                .get(1)
+                                .and_then(|v| v.parse().ok())
+                                .unwrap_or(1),
+                            version_parts
+                                .get(2)
+                                .and_then(|v| v.parse().ok())
+                                .unwrap_or(0),
+                        );
+
+                        let only_query = v2.version == BroadcastedDeclareTxnV2Version::V0x100000000000000000000000000000002;
+
+                        Ok(ExecutableTransactionInput::DeclareV2(
+                            tx,
+                            casm_contract_class,
+                            sierra_program_length,
+                            abi_length,
+                            only_query,
+                            sierra_version,
+                        ))
+                    }
+                    BroadcastedDeclareTxn::BroadcastedDeclareTxnV3(v3) => {
+                        // Convert to DeclareTransactionV3
+                        let class_hash = ClassHash(StarkHash::ZERO); // Will be computed by blockifier
+                        let compiled_class_hash =
+                            CompiledClassHash(StarkHash::from_hex_unchecked(
+                                v3.compiled_class_hash.as_ref(),
+                            ));
+                        let nonce = Nonce(StarkFelt::try_from(v3.nonce)?);
+                        let sender_address = ContractAddress::try_from(
+                            StarkHash::from_hex_unchecked(
+                                v3.sender_address.0.as_ref(),
+                            ),
+                        )?;
+                        let signature = TransactionSignature(Arc::new(
+                            v3.signature
+                                .into_iter()
+                                .map(StarkFelt::try_from)
+                                .collect::<Result<Vec<_>, _>>()?,
+                        ));
+
+                        // Convert resource bounds
+                        let resource_bounds = ValidResourceBounds::AllResources(
+                            AllResourceBounds {
+                                l1_gas: ResourceBounds {
+                                    max_amount: u64_to_u64(
+                                        v3.resource_bounds.l1_gas.max_amount,
+                                    )?
+                                    .into(),
+                                    max_price_per_unit: u128_to_u128(
+                                        v3.resource_bounds
+                                            .l1_gas
+                                            .max_price_per_unit,
+                                    )?
+                                    .into(),
+                                },
+                                l2_gas: ResourceBounds {
+                                    max_amount: u64_to_u64(
+                                        v3.resource_bounds.l2_gas.max_amount,
+                                    )?
+                                    .into(),
+                                    max_price_per_unit: u128_to_u128(
+                                        v3.resource_bounds
+                                            .l2_gas
+                                            .max_price_per_unit,
+                                    )?
+                                    .into(),
+                                },
+                                l1_data_gas: ResourceBounds {
+                                    max_amount: 0u64.into(),
+                                    max_price_per_unit: 0u128.into(),
+                                },
+                            },
+                        );
+
+                        let tip = Tip(u64_to_u64(v3.tip)?);
+
+                        let paymaster_data = PaymasterData(
+                            v3.paymaster_data
+                                .into_iter()
+                                .map(StarkFelt::try_from)
+                                .collect::<Result<Vec<_>, _>>()?,
+                        );
+
+                        let account_deployment_data = AccountDeploymentData(
+                            v3.account_deployment_data
+                                .into_iter()
+                                .map(StarkFelt::try_from)
+                                .collect::<Result<Vec<_>, _>>()?,
+                        );
+
+                        let tx = DeclareTransactionV3 {
+                            resource_bounds,
+                            tip,
+                            signature,
+                            nonce,
+                            class_hash,
+                            compiled_class_hash,
+                            sender_address,
+                            nonce_data_availability_mode: match v3.nonce_data_availability_mode {
+                                DaMode::L1 => starknet_api::data_availability::DataAvailabilityMode::L1,
+                                DaMode::L2 => starknet_api::data_availability::DataAvailabilityMode::L2,
+                            },
+                            fee_data_availability_mode: match v3.fee_data_availability_mode {
+                                DaMode::L1 => starknet_api::data_availability::DataAvailabilityMode::L1,
+                                DaMode::L2 => starknet_api::data_availability::DataAvailabilityMode::L2,
+                            },
+                            paymaster_data,
+                            account_deployment_data,
+                        };
+
+                        // Convert contract class using ToCairo from convert module
+                        use crate::convert::ToCairo;
+                        let cairo_class = v3.contract_class.to_cairo()?;
+
+                        // Compile to CASM
+                        let casm_contract_class = cairo_lang_starknet_classes::casm_contract_class::CasmContractClass::from_contract_class(
+                            cairo_class.clone(),
+                            false,
+                            usize::MAX,
+                        )?;
+
+                        // Calculate sierra program length and ABI length from the cairo class
+                        let sierra_program_length =
+                            cairo_class.sierra_program.len();
+                        let abi_length = match &cairo_class.abi {
+                            Some(abi) => {
+                                // Serialize ABI to JSON and count items
+                                let abi_json = serde_json::to_value(abi)
+                                    .unwrap_or(serde_json::Value::Array(
+                                        vec![],
+                                    ));
+                                match abi_json {
+                                    serde_json::Value::Array(items) => {
+                                        items.len()
+                                    }
+                                    _ => 0,
+                                }
+                            }
+                            None => 0,
+                        };
+
+                        // Parse sierra version from string (format: "0.1.0")
+                        let version_parts: Vec<&str> = cairo_class
+                            .contract_class_version
+                            .split('.')
+                            .collect();
+                        let sierra_version = SierraVersion::new(
+                            version_parts
+                                .first()
+                                .and_then(|v| v.parse().ok())
+                                .unwrap_or(0),
+                            version_parts
+                                .get(1)
+                                .and_then(|v| v.parse().ok())
+                                .unwrap_or(1),
+                            version_parts
+                                .get(2)
+                                .and_then(|v| v.parse().ok())
+                                .unwrap_or(0),
+                        );
+
+                        let only_query = v3.version == BroadcastedDeclareTxnV3Version::V0x100000000000000000000000000000003;
+
+                        Ok(ExecutableTransactionInput::DeclareV3(
+                            tx,
+                            casm_contract_class,
+                            sierra_program_length,
+                            abi_length,
+                            only_query,
+                            sierra_version,
+                        ))
+                    }
+                }
+            }
+            BroadcastedTxn::BroadcastedDeployAccountTxn(deploy_account_txn) => {
+                match deploy_account_txn.0 {
+                    DeployAccountTxn::DeployAccountTxnV1(v1) => {
+                        // Convert to DeployAccountTransactionV1
+                        let max_fee = Fee(felt_to_u128(v1.max_fee)?);
+                        let nonce = Nonce(StarkFelt::try_from(v1.nonce)?);
+                        let signature = TransactionSignature(Arc::new(
+                            v1.signature
+                                .into_iter()
+                                .map(StarkFelt::try_from)
+                                .collect::<Result<Vec<_>, _>>()?,
+                        ));
+                        let contract_address_salt =
+                            ContractAddressSalt(StarkHash::from_hex_unchecked(
+                                v1.contract_address_salt.as_ref(),
+                            ));
+                        let class_hash =
+                            ClassHash(StarkHash::from_hex_unchecked(
+                                v1.class_hash.as_ref(),
+                            ));
+                        let constructor_calldata = Calldata(Arc::new(
+                            v1.constructor_calldata
+                                .into_iter()
+                                .map(StarkFelt::try_from)
+                                .collect::<Result<Vec<_>, _>>()?,
+                        ));
+
+                        let tx = DeployAccountTransactionV1 {
+                            max_fee,
+                            signature,
+                            nonce,
+                            class_hash,
+                            contract_address_salt,
+                            constructor_calldata,
+                        };
+
+                        let only_query = v1.version == DeployAccountTxnV1Version::V0x100000000000000000000000000000001;
+
+                        Ok(ExecutableTransactionInput::DeployAccount(
+                            DeployAccountTransaction::V1(tx),
+                            only_query,
+                        ))
+                    }
+                    DeployAccountTxn::DeployAccountTxnV3(v3) => {
+                        // Convert to DeployAccountTransactionV3
+                        let nonce = Nonce(StarkFelt::try_from(v3.nonce)?);
+                        let signature = TransactionSignature(Arc::new(
+                            v3.signature
+                                .into_iter()
+                                .map(StarkFelt::try_from)
+                                .collect::<Result<Vec<_>, _>>()?,
+                        ));
+                        let contract_address_salt =
+                            ContractAddressSalt(StarkHash::from_hex_unchecked(
+                                v3.contract_address_salt.as_ref(),
+                            ));
+                        let class_hash =
+                            ClassHash(StarkHash::from_hex_unchecked(
+                                v3.class_hash.as_ref(),
+                            ));
+                        let constructor_calldata = Calldata(Arc::new(
+                            v3.constructor_calldata
+                                .into_iter()
+                                .map(StarkFelt::try_from)
+                                .collect::<Result<Vec<_>, _>>()?,
+                        ));
+
+                        // Convert resource bounds
+                        let resource_bounds = ValidResourceBounds::AllResources(
+                            AllResourceBounds {
+                                l1_gas: ResourceBounds {
+                                    max_amount: u64_to_u64(
+                                        v3.resource_bounds.l1_gas.max_amount,
+                                    )?
+                                    .into(),
+                                    max_price_per_unit: u128_to_u128(
+                                        v3.resource_bounds
+                                            .l1_gas
+                                            .max_price_per_unit,
+                                    )?
+                                    .into(),
+                                },
+                                l2_gas: ResourceBounds {
+                                    max_amount: u64_to_u64(
+                                        v3.resource_bounds.l2_gas.max_amount,
+                                    )?
+                                    .into(),
+                                    max_price_per_unit: u128_to_u128(
+                                        v3.resource_bounds
+                                            .l2_gas
+                                            .max_price_per_unit,
+                                    )?
+                                    .into(),
+                                },
+                                l1_data_gas: ResourceBounds {
+                                    max_amount: 0u64.into(),
+                                    max_price_per_unit: 0u128.into(),
+                                },
+                            },
+                        );
+
+                        let tip = Tip(u64_to_u64(v3.tip)?);
+
+                        let paymaster_data = PaymasterData(
+                            v3.paymaster_data
+                                .into_iter()
+                                .map(StarkFelt::try_from)
+                                .collect::<Result<Vec<_>, _>>()?,
+                        );
+
+                        let tx = DeployAccountTransactionV3 {
+                            resource_bounds,
+                            tip,
+                            signature,
+                            nonce,
+                            class_hash,
+                            contract_address_salt,
+                            constructor_calldata,
+                            nonce_data_availability_mode: match v3.nonce_data_availability_mode {
+                                DaMode::L1 => starknet_api::data_availability::DataAvailabilityMode::L1,
+                                DaMode::L2 => starknet_api::data_availability::DataAvailabilityMode::L2,
+                            },
+                            fee_data_availability_mode: match v3.fee_data_availability_mode {
+                                DaMode::L1 => starknet_api::data_availability::DataAvailabilityMode::L1,
+                                DaMode::L2 => starknet_api::data_availability::DataAvailabilityMode::L2,
+                            },
+                            paymaster_data,
+                        };
+
+                        let only_query = v3.version == DeployAccountTxnV3Version::V0x100000000000000000000000000000003;
+
+                        Ok(ExecutableTransactionInput::DeployAccount(
+                            DeployAccountTransaction::V3(tx),
+                            only_query,
+                        ))
+                    }
+                }
+            }
+        }
+    }
+}
