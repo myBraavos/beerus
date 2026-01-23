@@ -1,25 +1,33 @@
 use beerus::client::{Client, Http};
 use beerus::config::Config;
 use beerus::gen::{Address, Felt, FunctionCall};
-use eyre::{Context, Result};
+use beerus::storage::sql_storage_provider::SqlStorageProvider;
+use eyre::Result;
+use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
 
-    let api_key = std::env::var("ALCHEMY_API_KEY")
-        .context("ALCHEMY_API_KEY is missing")?;
-
     let config = Config {
+        eth_rpc: format!("https://eth-mainnet.public.blastapi.io"),
         starknet_rpc: format!(
-            "https://starknet-mainnet.g.alchemy.com/starknet/version/rpc/v0_7/{api_key}"
+            "https://starknet-mainnet.public.blastapi.io/rpc/v0_10"
         ),
-        gateway_url: None,
-        data_dir: "tmp".to_owned(),
+        gateway_url: format!("https://feeder.alpha-mainnet.starknet.io"),
+        database_url: format!(
+            "postgresql://postgres:postgres@localhost:5432/beerus"
+        ),
+        l2_rate_limit: 10,
+        l1_range_blocks: 9,
+        disable_background_loader: true,
+        validate_historical_blocks: true,
     };
 
     let http = Http::new();
-    let beerus = Client::new(&config, http).await?;
+    let storage =
+        Arc::new(SqlStorageProvider::new(&config.database_url).await?);
+    let beerus = Client::new(&config, http, storage).await?;
 
     let calldata = FunctionCall {
         contract_address: Address(Felt::try_new(
@@ -31,9 +39,12 @@ async fn main() -> Result<()> {
         calldata: vec![],
     };
 
-    let state = beerus.get_state().await?;
+    let state = beerus.verify_and_update_state(
+        &Felt::try_new("0x7256dde30ae68f43f3def9ce2a4433dd3de11b630d4f84336891bad8fe4127e")?,
+        Some(Felt::try_new("0x6084bda2cd3247aa11364404f7918001e82a7567cfe0b949fa6a7f3d4b4099f")?),
+    ).await?;
     let res = beerus.execute(calldata, state)?;
-    println!("{:#?}", res);
+    tracing::info!("{res:#?}");
 
     Ok(())
 }
