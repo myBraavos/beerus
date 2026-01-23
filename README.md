@@ -1,45 +1,48 @@
-### UPDATE: 2025-02-07
+# Beerus - Starknet Light Client
 
-*Hey everyone,*
+Quick start with Docker Compose:
 
-*We wanted to share that the team at Eiger will be putting development on Beerus on hold for now.*
+1. Create `.env` file based on `.env-example` and fill in the required values:
+   - `POSTGRES_USER` - PostgreSQL username
+   - `POSTGRES_PASSWORD` - PostgreSQL password
+   - `ETH_RPC` - Ethereum RPC endpoint URL
+   - `STARKNET_RPC` - Starknet RPC endpoint URL (must support v0.10 API)
+   - `GATEWAY_URL` - Starknet Feeder Gateway URL
+   - `DATABASE_URL` - PostgreSQL connection string (automatically set in docker-compose)
 
-*With Starknet’s work on consensus and zk proof verification still in progress, we believe it’s best to pause Beerus until the specs are finalized.
-We’ve truly enjoyed working on Beerus and are incredibly grateful to everyone who’s been part of the journey so far. Thank you for your support, insights, and contributions! We’re excited for what’s ahead.*
+2. Run `docker-compose up --build`
 
----
+3. Wait for initialization. You will see `Started state range verification ...`. It will take some time to verify blocks starting from the latest L1 block.
 
-<div align="center">
-  <img src="etc/beerus.png" height="250" />
-  <div align="center">
+4. When finished, you'll see `Starting the sync from block ...`. At this point, you can use the light client as RPC at `localhost:3030`.
 
-  [![check-job-status](https://github.com/eigerco/beerus/actions/workflows/check.yml/badge.svg)](https://github.com/eigerco/beerus/actions/workflows/check.yml)
+## Documentation
 
-  </div>
-  <h1>Beerus</h1>
-
-  Beerus is a stateless and (soon to be completely) trustless Starknet Light Client.
-</div>
-
-## Project updates
-
-At the beginning of 2024 [Eiger](https://www.eiger.co/) took over the ownership of the Beerus repository and leadership of the project. Beerus was started by the Starkware Exploration Team and we are grateful for their trust and the excellent work they have done.
-
-One of our goals is to integrate Beerus into web-based wallets, enabling users to switch seamlessly to a light client mode. This transition is crucial for those who prefer not to rely on untrusted RPC providers, a critical step to trustless operation.
-
-We post development updates on the [Telegram channel](https://t.me/BeerusStarknet)
-
-* 2025-JAN-21: Switch to L2 network (instead of L1) and release [v0.7.0](https://github.com/eigerco/beerus/releases/tag/v0.7.0).
-* 2024-AUG-28: Migrate to the [Starknet v0.7.1 OpenRpc spec](https://github.com/starkware-libs/starknet-specs/tree/v0.7.1).
-* 2024-JUN-18: "Beerus Reborn": brand new Beerus with RPC Codegen, Stateless Execution, State Proof Verification, release [v0.5.0](https://github.com/eigerco/beerus/releases/tag/v0.5.0)
-* 2024-FEB-29: Migrate to the [Starknet v0.6.0 OpenRPC spec](https://github.com/starkware-libs/starknet-specs/tree/v0.6.0)
-* 2024-JAN-17: [Blog: Eiger takes responsibility over Beerus](https://www.eiger.co/blog/eiger-taking-over-ownership-for-beerus-working-on-starknet-light-clients)
+For detailed information about Beerus architecture, including state synchronization and call execution, see the [Architecture Documentation](doc/architecture.md).
 
 ## Getting Started
 
 ### Running Beerus for the first time
 
-Copy the configuration file from `etc/conf/beerus.toml` and set up the RPC provider URLs in the copy.
+#### Prerequisites
+
+**PostgreSQL Database Required**
+
+Beerus requires a PostgreSQL database (version 12 or higher) to store L1 and L2 state data. You can either:
+
+1. **Use Docker Compose (recommended for quick start)** - Automatically sets up PostgreSQL. See quick start instructions above.
+2. **Set up PostgreSQL separately** - Install and configure PostgreSQL, then provide the connection string in your configuration.
+
+The database will be automatically initialized with the required schema on first run. Make sure the database user has permissions to create tables.
+
+#### Using Configuration File
+
+Copy the configuration file from `etc/conf/beerus.toml` and set up all required fields:
+- `eth_rpc` - Ethereum RPC endpoint URL
+- `starknet_rpc` - Starknet RPC endpoint URL (must support v0.10 API)
+- `gateway_url` - Starknet Feeder Gateway URL
+- `database_url` - PostgreSQL connection string
+
 Make sure that providers are compatible. Read more about providers [here](#rpc-providers)
 
 Then run:
@@ -47,80 +50,108 @@ Then run:
 cargo run --release -- -c ./path/to/config.toml
 ```
 
-Once Beerus has started to verify that it is up and running, try this request:
-```
-curl -H 'Content-type: application/json' -d'{
-    "jsonrpc": "2.0",
-    "method": "starknet_getStateRoot",
-    "params": [],
-    "id": 1
-}' http://127.0.0.1:3030
-```
+#### Using Environment Variables
 
-The successful result should look similar to the one below:
-```
-{"jsonrpc":"2.0","result":"0x539895aff28be4958188c1d4e8e68ee6772bdd49dd9362a4fbb189e61c54ff1","id":1}
+Alternatively, you can configure Beerus using environment variables:
+```bash
+export ETH_RPC="https://eth-mainnet.public.blastapi.io"
+export STARKNET_RPC="https://starknet-mainnet.public.blastapi.io/rpc/v0_9"
+export GATEWAY_URL="https://feeder.alpha-mainnet.starknet.io"
+export DATABASE_URL="postgresql://user:password@localhost:5432/beerus"
+cargo run --release
 ```
 
 ### Configuration
 
+#### Required Fields
+
 | field   | example | description |
 | ----------- | ----------- | ----------- |
-| starknet_rpc | https://starknet-mainnet.g.alchemy.com/starknet/version/rpc/v0_7/{YOUR_API_KEY} | Starknet service provider URL |
-| gateway_url | https://alpha-mainnet.starknet.io | `OPTIONAL` Feeder Gateway base URL |
-| data_dir | tmp | `OPTIONAL` location to store both L1 and L2 data |
-| poll_secs | 5 | `OPTIONAL` seconds to wait for querying sn state, min = 1 and max = 3600 |
-| rpc_addr | 127.0.0.1:3030 | `OPTIONAL` local address to listen for rpc reqs |
+| `eth_rpc` | `https://eth-mainnet.public.blastapi.io` | Ethereum RPC endpoint URL for L1 state verification |
+| `starknet_rpc` | `https://starknet-mainnet.public.blastapi.io/rpc/v0_9` | Starknet RPC service provider URL (must support v0.10 API) |
+| `gateway_url` | `https://feeder.alpha-mainnet.starknet.io` | Starknet Feeder Gateway base URL |
+| `database_url` | `postgresql://user:password@localhost:5432/beerus` | PostgreSQL database connection string |
 
-#### RPC provider
-Beerus relies on Starknet RPC service provider and on Feeder Gateway URL.
+#### Optional Fields
 
-##### Starknet RPC endpoint
-Beerus expects serving the [v0.7.1 of the Starknet OpenRPC specs](https://github.com/starkware-libs/starknet-specs/tree/v0.7.1).
+| field   | default | description |
+| ----------- | ----------- | ----------- |
+| `l2_rate_limit` | `10` | L2 RPC requests per second, min = 1, max = 1000 |
+| `l1_range_blocks` | `9` | Number of L1 blocks to fetch in a range, min = 1, max = 100000 |
+| `poll_secs` | `10` | Seconds between L2 state sync checks, min = 1, max = 3600 |
+| `l1_poll_secs` | `600` | Seconds between L1 state verification checks, min = 30, max = 36000 |
+| `rpc_addr` | `0.0.0.0:3030` | Local address to listen for RPC requests |
 
-Starknet RPC provider must also support the [Pathfinder's extension API](https://github.com/eqlabs/pathfinder#pathfinder-extension-api) `pathfinder_getProof` endpoint. 
+#### Example Configuration File (`beerus.toml`)
+
+```toml
+eth_rpc = "https://eth-mainnet.public.blastapi.io"
+starknet_rpc = "https://starknet-mainnet.public.blastapi.io/rpc/v0_9"
+gateway_url = "https://feeder.alpha-mainnet.starknet.io"
+database_url = "postgresql://postgres:postgres@localhost:5432/beerus"
+l2_rate_limit = 10
+l1_range_blocks = 9
+poll_secs = 10
+l1_poll_secs = 600
+rpc_addr = "127.0.0.1:3030"
+```
+
+#### RPC Providers
+
+Beerus relies on:
+- **Ethereum RPC provider** - For L1 state verification
+- **Starknet RPC service provider** - Must support v0.10 API
+- **Starknet Feeder Gateway URL** - For gateway state queries
+
+##### Starknet RPC Endpoint Requirements
+
+Beerus expects the Starknet RPC provider to serve the [v0.10 of the Starknet OpenRPC specs](https://github.com/starkware-libs/starknet-specs).
+
 
 You can check if the provider is compatible by running this command:
 ```bash
 # This is an example RPC url. Use your RPC provider url to check if the node is compatible.
-STARKNET_RPC_URL="https://starknet-sepolia.g.alchemy.com/starknet/version/rpc/v0_7/{YOUR_API_KEY}"
-curl --request POST \
-     --url $STARKNET_RPC_URL \
-     --header 'content-type: application/json' \
-     --data '
-{
+STARKNET_RPC_URL="https://starknet-mainnet.core.chainstack.com/{YOUR_API_KEY}/rpc/v0_9"
+curl --location $STARKNET_RPC_URL \
+--header 'Content-Type: application/json' \
+--data '{
   "id": 1,
   "jsonrpc": "2.0",
-  "method": "pathfinder_getProof",
+  "method": "starknet_getStorageProof",
   "params": [
     {
-      "block_number": 56072
+      "block_number": 3027730
     },
-    "0x07cb0dca5767f238b056665d2f8350e83a2dee7eac8ec65e66bbc790a4fece8a",
     [
-        "0x01d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"
+    ],
+    [
+    ],
+    [
+      {
+        "contract_address": "0x06445b2f04abaab412ea6881978415bfa4b5b7ee9439ae6e2af9b76c44f8c575",
+        "storage_keys": [
+          "0x0206f38f7e4f15e87567361213c28f235cccdaa1d7fd34c9db1dfe9489c6a091"
+        ]
+      }
     ]
   ]
-}
-'
+}'
 ```
 
 If you get a response similar to the one below, then the provider is **not compatible**.
 ```
 {
-  "jsonrpc": "2.0",
-  "id": 1,
-  "error": {
-    "code": -32601,
-    "message": "method 'pathfinder_getProof' not found"
-  }
+    "jsonrpc": "2.0",
+    "error": {
+        "code": 42,
+        "message": "the node doesn't support storage proofs for blocks that are too far in the past"
+    },
+    "id": 1
 }
 ```
 
-We recommend using one of these providers:
-- [Alchemy](https://docs.alchemy.com/reference/starknet-api-faq#what-versions-of-starknet-api-are-supported)
+We recommend to use chainstack:
 - [Chainstack](https://docs.chainstack.com/docs/starknet-tooling)
-- [Reddio](https://docs.reddio.com/guide/node/starknet.html#grab-starknet-sepolia-endpoint)
 
 More API providers can be found [here](https://docs.starknet.io/documentation/tools/api-services/).
 
@@ -136,22 +167,34 @@ cargo build --release
 
 ```bash
 cargo test
+```
 
-## Run integration tests against live endpoint
-export STARKNET_MAINNET_URL=https://starknet-mainnet.g.alchemy.com/starknet/version/rpc/v0_7/${ALCHEMY_API_KEY}
-export STARKNET_SEPOLIA_URL=https://starknet-sepolia.g.alchemy.com/starknet/version/rpc/v0_7/${ALCHEMY_API_KEY}
-BEERUS_TEST_RUN=1 cargo test
+To generate coverage report use tarpaulin
+
+```bash
+cargo install cargo-tarpaulin
+cargo tarpaulin --out html
 ```
 
 #### Docker
 
+Build the Docker image:
 ```bash
 docker build . -t beerus
 ```
 
+Run with environment variables:
 ```bash
-docker run -e STARKNET_RPC=<arg> -it beerus
+docker run \
+  -e ETH_RPC="https://eth-mainnet.public.blastapi.io" \
+  -e STARKNET_RPC="https://starknet-mainnet.core.chainstack.com/{your_key}/rpc/v0_9" \
+  -e GATEWAY_URL="https://feeder.alpha-mainnet.starknet.io" \
+  -e DATABASE_URL="postgresql://user:password@host:5432/beerus" \
+  -p 3030:3030 \
+  -it beerus
 ```
+
+For production use, prefer Docker Compose (see quick start section above) as it automatically sets up PostgreSQL and handles all configuration.
 
 #### Examples
 

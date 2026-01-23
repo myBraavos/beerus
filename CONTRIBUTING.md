@@ -3,7 +3,7 @@
 ## Beerus
 
 To contribute to the project, start with the proper development copy.
-You may want to use the GitHub interface to fork [Beerus](https://github.com/eigerco/beerus) and check out your fork.
+You may want to use the GitHub interface to fork [Beerus](https://github.com/starknet-io/beerus) and check out your fork.
 
 ### Legal Notice
 
@@ -12,7 +12,7 @@ When contributing to this project, you must agree that you have authored 100% of
 ## Versioning
 
 The project uses [SemVer](http://semver.org/) for versioning.
-For the versions available, see the [tags on this repository](https://github.com/eigerco/beerus/tags).
+For the versions available, see the [tags on this repository](https://github.com/starknet-io/beerus/tags).
 
 ## Developer Workflow
 
@@ -41,7 +41,7 @@ Project history should be bisect-able so that when regressions are identified it
 
 Do not hesitate to publish PRs as drafts first so you can review these one last time before we do.
 
-Make sure all the [GitHub Actions](https://github.com/eigerco/beerus/actions) checks pass.
+Make sure all the [GitHub Actions](https://github.com/starknet-io/beerus/actions) checks pass.
 
 Any `feat` and `fix` PR should include tests.
 
